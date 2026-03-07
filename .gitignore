@@ -1,5 +1,2 @@
 .env
-.session
 node_modules/
-agent/CLAUDE.md
-agent/memory.md
