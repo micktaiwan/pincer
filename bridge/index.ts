@@ -1,8 +1,9 @@
 import { Bot } from "grammy";
 import { spawn, execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = resolve(__dirname, "../.env");
@@ -36,8 +37,19 @@ const bot = new Bot(token);
 const projectDir = resolve(__dirname, "..");
 const agentDir = resolve(projectDir, "agent");
 
+// Agent runtime directory — separate from the source repo
+const agentHome = resolve(homedir(), ".pincer");
+mkdirSync(agentHome, { recursive: true });
+
+// Copy agent CLAUDE.md to runtime dir at startup
+const agentClaudeMd = resolve(agentDir, "CLAUDE.md");
+if (existsSync(agentClaudeMd)) {
+  copyFileSync(agentClaudeMd, resolve(agentHome, "CLAUDE.md"));
+  console.log(`[init] copied agent CLAUDE.md to ${agentHome}`);
+}
+
 // Session ID for conversation continuity (persisted to disk)
-const sessionFile = resolve(projectDir, ".session");
+const sessionFile = resolve(agentHome, ".session");
 let sessionId: string | null = null;
 
 try {
@@ -63,7 +75,7 @@ function claude(prompt: string): Promise<string> {
     console.log(`[claude] spawn ${sessionId ? `(resume ${sessionId})` : "(new session)"}`);
 
     const child = spawn(claudeBin, args, {
-      cwd: agentDir,
+      cwd: agentHome,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
     });
@@ -99,7 +111,7 @@ function claude(prompt: string): Promise<string> {
             const blocks = data.result?.content || data.content || [];
             const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
             if (text) resultText = text;
-            console.log(`[claude] cost: $${data.total_cost_usd ?? "?"} duration: ${data.duration_ms}ms (api: ${data.duration_api_ms}ms)`);
+            console.log(`[claude] cost: $${Number(data.total_cost_usd ?? 0).toFixed(2)} duration: ${data.duration_ms}ms (api: ${data.duration_api_ms}ms)`);
           }
           if (data.type === "result" && (data.subtype === "error" || data.subtype === "error_during_execution")) {
             console.error("[claude] error result:", data.error || data.result?.error);
