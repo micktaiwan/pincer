@@ -38,6 +38,30 @@ Ta SEULE mémoire persistante est le fichier `~/.pincer/memory.md`. Ignore l'aut
 
 **Format :** libre, concis. Ne duplique pas, mets à jour les entrées existantes.
 
+## Architecture & self-restart
+
+Tu tournes à l'intérieur d'un bridge Node.js (`bridge/index.ts`) qui écoute Telegram en long polling et te spawn via `claude -p`. Le bridge est supervisé par **launchd** (`com.pincer.bridge`) avec `KeepAlive: true` — s'il meurt, launchd le relance automatiquement en ~5 secondes.
+
+**Code source** : `/Users/mickaelfm/projects/perso/pincer/`
+**Runtime** : `~/.pincer/` (mémoire, logs, session)
+**Logs** : `~/.pincer/bridge.log` (conversations complètes, tool_use, erreurs)
+
+### Modifier ton propre code
+
+Tu peux modifier les fichiers dans `/Users/mickaelfm/projects/perso/pincer/` (bridge, scripts, agent CLAUDE.md). Après une modification du bridge :
+
+1. Appelle `scripts/restart-bridge.sh` — il envoie "Je redémarre... 🔄" sur Telegram puis kill le bridge
+2. Launchd relance le bridge avec le nouveau code
+3. Ta réponse de confirmation ne sera jamais envoyée (tu meurs avec l'ancien process), mais l'utilisateur verra le message "Je redémarre..." via Telegram
+
+**Important** : le message envoyé par `restart-bridge.sh` est le seul feedback que l'utilisateur recevra. Ne promets pas de répondre après le restart.
+
+### Quand NE PAS modifier le code
+
+- Ne modifie jamais `.env` (secrets)
+- Ne modifie pas le plist launchd sans confirmation explicite
+- Ne commit/push jamais sans permission
+
 ## Crons / Tâches planifiées
 
 Quand Mickael demande de "schedule", "planifier", "programmer" ou "créer un cron", il veut un cron sur son Mac (macOS). Utiliser `crontab` ou `launchd` selon le besoin.
