@@ -23,7 +23,7 @@ CLAUDE.md servait initialement aux deux usages (dev + personnalité agent). Sép
 
 ### Mémoire : memory.md vs auto-memory Claude Code
 
-L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas en mode `-p` (one-shot). L'agent gère sa propre mémoire dans `agent/memory.md` via Read/Write.
+L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas en mode `-p` (one-shot). L'agent gère sa propre mémoire dans `~/.pincer/memory.md` via Read/Write.
 
 ## Étapes
 
@@ -40,14 +40,23 @@ L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas 
 10. [x] Session persistée sur disque
 11. [x] Repo GitHub + README
 
-### Phase 2 — Intégrations
-12. [ ] Lancement auto du bridge (launchd)
-13. [ ] Webhook Slack
-14. [ ] Premier cron utile (résumé emails/calendar)
-15. [ ] Backup agent/memory.md
+### Phase 2 — Robustesse & ops (done)
+12. [x] Séparation runtime (~/.pincer/) vs sources (repo)
+13. [x] Lancement auto du bridge (launchd + KeepAlive)
+14. [x] Self-restart (scripts/restart-bridge.sh + launchd)
+15. [x] Réactions Telegram (👀 réception, 👍 réponse envoyée)
+16. [x] Logs persistants (~/.pincer/bridge.log)
+17. [x] Historique conversations structuré (~/.pincer/conversations.jsonl)
+18. [x] Retry résilient (même session → session fraîche avec context recovery)
+19. [x] Documentation architecture dans agent/CLAUDE.md
 
-### Phase 3 — Évolutions
-16. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
-17. [ ] Typing indicator continu
-18. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
-19. [ ] Commandes Telegram (/reset, /status, etc.)
+### Phase 3 — Intégrations
+20. [ ] Webhook Slack
+21. [ ] Premier cron utile (résumé emails/calendar)
+22. [ ] Backup memory.md
+
+### Phase 4 — Évolutions
+23. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
+24. [ ] Typing indicator continu
+25. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
+26. [ ] Commandes Telegram (/reset, /status, etc.)
