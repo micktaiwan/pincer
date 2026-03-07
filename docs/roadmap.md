@@ -12,7 +12,9 @@ Approche légère vs OpenClaw : pas de serveur Docker, pas de gateway. Un bridge
 pincer/
   CLAUDE.md              # Instructions projet (pour le dev)
   agent/
-    prompt.md            # Personnalité de Pincer (chargé par le bridge via --append-system-prompt)
+    CLAUDE.md            # Personnalité de l'agent (gitignored, perso)
+    CLAUDE.md.example    # Template personnalité (commité)
+    memory.md            # Mémoire persistante de l'agent (gitignored)
   bridge/
     index.ts             # Long polling Telegram (grammy) + spawn claude CLI
     package.json         # grammy + tsx
@@ -23,37 +25,32 @@ pincer/
     roadmap.md           # Ce fichier
   .env                   # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SLACK_WEBHOOK_URL
   .env.example           # Template sans secrets
-  .gitignore             # .env, node_modules/
+  .gitignore
 ```
 
 ## Séparation des contextes
 
-- `CLAUDE.md` = instructions projet pour le développeur (cette session Claude Code)
-- `agent/prompt.md` = personnalité de Pincer (chargé par le bridge pour les conversations Telegram)
-- Auto-memory de Claude Code = mémoire persistante entre sessions
+- `CLAUDE.md` (racine) = instructions projet pour le développeur
+- `agent/CLAUDE.md` = personnalité et instructions de l'agent (gitignored)
+- `agent/memory.md` = mémoire persistante de l'agent, gérée par l'agent lui-même (gitignored)
 
 ## Bridge — fonctionnement
 
 1. Le bridge tourne en permanence (long polling Telegram via grammy)
-2. Message Telegram arrive -> spawn `claude -p <message> --resume <sessionId> --append-system-prompt <agent/prompt.md>`
-3. Claude répond via stream-json, le bridge parse et renvoie sur Telegram
-4. Le `sessionId` est conservé entre les messages pour garder l'historique de conversation
+2. Message Telegram arrive -> spawn `claude -p <message> --resume <sessionId>` dans le répertoire `agent/`
+3. Claude lit `agent/CLAUDE.md`, répond via stream-json, le bridge parse et renvoie sur Telegram
+4. Claude peut écrire dans `agent/memory.md` pour persister des souvenirs (via `--permission-mode bypassPermissions`)
+5. Le `sessionId` est conservé sur disque (`.session`) pour survivre aux redémarrages
 
 Points techniques :
 - Le binaire `claude` est résolu au démarrage via `which claude` (le PATH de Node peut différer)
 - `--output-format stream-json --verbose` pour parser la sortie structurée
-- Reset automatique de session en cas d'erreur
+- Reset automatique de session en cas d'erreur (retry avec session neuve)
 
 ## Scripts
 
 - `telegram.sh <message>` — curl vers `api.telegram.org/bot$TOKEN/sendMessage`
 - `slack.sh <message>` — curl vers le webhook Slack
-
-## Crons / loops typiques (a venir)
-
-- **Cron quotidien 9h** : résumé emails + calendar -> Telegram
-- **Cron** : backup auto-memory vers repo privé GitHub
-- **/loop ad hoc** : surveiller des PRs, babysit un deploy, etc.
 
 ## Décisions d'architecture
 
@@ -63,21 +60,22 @@ On utilise les mécanismes natifs de Claude Code plutôt que de reproduire le sy
 
 **Ce qu'on gagne :**
 - Zéro boilerplate (pas de boot sequence "lis SOUL.md puis USER.md...")
-- Héritage global -> projet (~/.claude/CLAUDE.md + pincer/CLAUDE.md)
-- Auto-memory sans friction (natif Claude Code)
+- Héritage global -> projet (~/.claude/CLAUDE.md + agent/CLAUDE.md)
 - Crons + /loop natifs (pas besoin de heartbeat custom)
 
 **Ce qu'on perd (acceptable) :**
-- Journal quotidien structuré (l'auto-memory est thématique, pas chronologique)
+- Journal quotidien structuré (la mémoire est thématique, pas chronologique)
 - Portabilité multi-LLM (pas un objectif)
 
-### Séparation CLAUDE.md / agent/prompt.md
+### Séparation CLAUDE.md racine / agent/CLAUDE.md
 
 CLAUDE.md servait initialement aux deux usages (dev + personnalité agent). Séparé car :
 - Conflit de contexte : le dev a besoin d'instructions projet, le bridge a besoin de personnalité agent
-- `--append-system-prompt` permet de charger la personnalité sans polluer le CLAUDE.md projet
+- Le bridge lance claude depuis `agent/`, il charge naturellement `agent/CLAUDE.md`
 
-**Point d'attention :** backup de l'auto-memory (~/.claude/projects/*/memory/) qui n'est pas dans le repo projet.
+### Mémoire : memory.md vs auto-memory Claude Code
+
+L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas en mode `-p` (one-shot). L'agent gère sa propre mémoire dans `agent/memory.md` via Read/Write.
 
 ## Étapes
 
@@ -88,17 +86,21 @@ CLAUDE.md servait initialement aux deux usages (dev + personnalité agent). Sép
 4. [x] scripts/telegram.sh fonctionnel
 5. [x] Bridge bidirectionnel Telegram (grammy + claude CLI)
 6. [x] Historique de conversation (--resume sessionId)
-7. [x] Séparation CLAUDE.md (projet) / agent/prompt.md (personnalité)
-8. [ ] Lancement auto du bridge (launchd)
-9. [ ] README.md
+7. [x] Séparation CLAUDE.md (projet) / agent/CLAUDE.md (personnalité)
+8. [x] Mémoire persistante (agent/memory.md géré par l'agent)
+9. [x] Permissions agent (bypassPermissions — Bash, Read, Write)
+10. [x] Session persistée sur disque (.session)
+11. [x] Repo GitHub privé
+12. [x] README.md
 
 ### Phase 2 — Intégrations
-10. [ ] Webhook Slack (scripts/slack.sh)
-11. [ ] Cron quotidien résumé emails/calendar
-12. [ ] Backup auto-memory vers repo privé GitHub
+13. [ ] Lancement auto du bridge (launchd)
+14. [ ] Webhook Slack (scripts/slack.sh)
+15. [ ] Premier cron utile (résumé emails/calendar le matin)
+16. [ ] Backup agent/memory.md
 
 ### Phase 3 — Évolutions
-13. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
-14. [ ] Typing indicator continu pendant que Claude réfléchit
-15. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
-16. [ ] Commandes Telegram (/reset, /status, etc.)
+17. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
+18. [ ] Typing indicator continu pendant que Claude réfléchit
+19. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
+20. [ ] Commandes Telegram (/reset, /status, etc.)
