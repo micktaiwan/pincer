@@ -1,56 +1,55 @@
-# Pincer — Capacités & Commandes
+# Pincer — Capabilities & Commands
 
-Source de vérité sur ce que Pincer sait faire. Lue à la demande quand un utilisateur pose la question.
+Source of truth on what Pincer can do. Read on demand when a user asks.
 
-## Commandes Telegram
+## Telegram Commands
 
-| Commande | Description |
-|----------|-------------|
-| `/new` | Sauvegarde la mémoire de la conversation en cours, archive l'historique, puis reset la session. Utile quand on change de sujet ou que la session est instable. |
+| Command | Description |
+|---------|-------------|
+| `/new` | Saves the current conversation's memory, archives history, then resets the session. Useful when switching topics or when the session is unstable. |
 
-Tout autre message texte est traité comme une conversation libre — Pincer répond via Claude.
+Any other text message is treated as free conversation — Pincer responds via Claude.
 
-## Intégrations & outils
+## Integrations & Tools
 
 ### Telegram
-- Canal principal de communication
-- Long polling (pas de webhook), toujours en écoute
-- Réaction 👀 à la réception d'un message, supprimée après réponse
-- Indicateur "typing" pendant le traitement
+- Primary communication channel
+- Long polling (no webhook), always listening
+- Reacts with 👀 on message receipt, removed after response
+- "Typing" indicator during processing
 
 ### Panorama (MCP)
-- Gestion de projets, tâches, notes
-- Emails (lecture, recherche, labels)
+- Project, task, and note management
+- Emails (read, search, labels)
 - Calendar
-- Invoqué quand on dit "pano" ou quand le contexte le nécessite
+- Invoked when the user says "pano" or when context requires it
 
 ### Slack
-- Envoi de messages via webhook (`scripts/slack.sh`)
+- Send messages via webhook (`scripts/slack.sh`)
 
-### Crons & tâches planifiées
-- Peut créer des crons (`crontab`) ou des daemons (`launchd`) sur le Mac de Mickael
-- Peut utiliser `/loop` pour des tâches récurrentes avec suivi d'état
+### Crons & Scheduled Tasks
+- Can create crons (`crontab`) or daemons (`launchd`) on the user's Mac
 
-### Auto-modification
-- Peut modifier son propre code source (bridge, scripts, agent CLAUDE.md)
-- Après modification du bridge : appelle `scripts/restart-bridge.sh` pour redémarrer
+### Self-modification
+- Can modify its own source code (bridge, scripts, agent CLAUDE.md)
+- After modifying the bridge: calls `scripts/restart-bridge.sh` to restart
 
-## Capacités générales
+## General Capabilities
 
-- **Conversation** : discussion libre en français, ton direct, esprit critique
-- **Mémoire** : fichier `~/.pincer/memory.md` lu et mis à jour à chaque interaction
-- **Recherche** : accès à WebSearch et WebFetch pour chercher des infos en ligne
-- **Fichiers** : lecture et écriture de fichiers sur le Mac
-- **Shell** : exécution de commandes bash
-- **Git** : opérations git (status, diff, log, commit — avec confirmation)
-- **Développement** : peut écrire, modifier et débugger du code
-- **Emails & calendar** : via Panorama (lecture, recherche, résumé)
-- **Notifications proactives** : emails urgents, events imminents, PRs à traiter
+- **Conversation**: free-form discussion, direct tone, critical thinking
+- **Memory**: `~/.pincer/memory.md` file read and updated on each interaction
+- **Search**: access to WebSearch and WebFetch for online lookups
+- **Files**: read and write files on the Mac
+- **Shell**: execute bash commands
+- **Git**: git operations (status, diff, log, commit — with confirmation)
+- **Development**: can write, modify, and debug code
+- **Emails & calendar**: via Panorama (read, search, summarize)
+- **Proactive notifications**: urgent emails, upcoming events, PRs to review
 
-## Limites
+## Limitations
 
-- Timeout de 120 secondes par requête Claude
-- Messages Telegram limités à 4096 caractères (pas de chunking pour l'instant)
-- Pas de gestion d'images/documents Telegram (texte uniquement)
-- Mémoire limitée au fichier memory.md (pas de base de données)
-- Un seul utilisateur autorisé (TELEGRAM_CHAT_ID dans .env)
+- 120-second timeout per Claude request
+- Telegram messages limited to 4096 characters (no chunking yet)
+- No image/document handling from Telegram (text only)
+- Memory limited to memory.md file (no database)
+- Single authorized user (TELEGRAM_CHAT_ID in .env)

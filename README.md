@@ -10,7 +10,7 @@ Lightweight alternative to full-stack AI assistants like OpenClaw — no server,
 Telegram <-> Bridge (grammy long polling) <-> claude CLI <-> Anthropic API
 ```
 
-The bridge listens for Telegram messages, spawns `claude -p` with your message, and sends the response back. Conversations are persistent via `--resume`. The agent manages its own memory in `agent/memory.md`.
+The bridge listens for Telegram messages, spawns `claude -p` with your message, and sends the response back. Conversations are persistent via `--resume`. The agent manages its own memory in `~/.pincer/memory.md`.
 
 ## Prerequisites
 
@@ -39,58 +39,59 @@ Edit `.env` with your values:
 - `TELEGRAM_CHAT_ID` — your Telegram user ID (send a message to your bot, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
 - `SLACK_WEBHOOK_URL` — (optional) Slack incoming webhook URL
 
-### 3. Configure agent personality
-
-```bash
-cp agent/CLAUDE.md.example agent/CLAUDE.md
-```
-
-Edit `agent/CLAUDE.md` to customize your agent's name, language, tone, and behavior.
-
-### 4. Start the bridge
+### 3. Start the bridge
 
 ```bash
 cd bridge
 npm start
 ```
 
-Send a message to your bot on Telegram — it should respond.
+Send a message to your bot on Telegram. On first launch, the agent will ask for a name, language, and tone — then configure itself automatically.
 
-### 5. (Optional) Interactive mode
+### 4. (Optional) Manual configuration
 
-You can also talk to your agent directly in the terminal:
+Personal config files live in `~/.pincer/` and are created automatically on first launch:
 
-```bash
-cd agent
-claude
-```
+- **`personality.md`** — agent name, language, tone, personality traits
+- **`tools.md`** — integrations, local paths, platform-specific config
 
-Same CLAUDE.md, same memory.md — consistent behavior across both interfaces.
+You can edit these files directly, or ask the agent to change them via Telegram ("speak English from now on", "add Slack integration").
 
 ## Architecture
 
 ```
 pincer/
-  CLAUDE.md              # Project instructions (for development)
+  CLAUDE.md                  # Project instructions (for development)
   agent/
-    CLAUDE.md            # Agent personality and instructions (gitignored)
-    CLAUDE.md.example    # Template (committed)
-    memory.md            # Agent's persistent memory (gitignored)
+    CLAUDE.md                # System instructions for the agent (committed)
+    meta.md                  # Agent capabilities and commands (committed)
+    personality.md.example   # Personality template
+    tools.md.example         # Tools & local config template
   bridge/
-    index.ts             # Telegram long polling + claude CLI spawn
+    index.ts                 # Telegram long polling + claude CLI spawn
     package.json
   scripts/
-    telegram.sh          # Send a Telegram message (curl)
-    slack.sh             # Send a Slack message (curl webhook)
+    telegram.sh              # Send a Telegram message (curl)
+    slack.sh                 # Send a Slack message (curl webhook)
+    track-reminder.sh        # Hourly task reminder
   docs/
-    roadmap.md           # Roadmap and architecture decisions
+    roadmap.md               # Roadmap and architecture decisions
+
+~/.pincer/                   # Runtime directory (created by the bridge)
+  CLAUDE.md                  # Copied from agent/CLAUDE.md at startup
+  meta.md                    # Copied from agent/meta.md at startup
+  personality.md             # Personal config — who the agent is
+  tools.md                   # Personal config — integrations and local setup
+  memory.md                  # Agent's persistent memory
+  .session                   # Session ID for conversation continuity
 ```
 
 ### Key design decisions
 
 - **Claude Code is the brain** — the bridge is just a transport layer
-- **`agent/CLAUDE.md` is the personality** — separated from project CLAUDE.md to avoid context pollution
-- **`agent/memory.md` is the memory** — managed by the agent itself via Read/Write tools, not by the bridge
+- **Three-layer config** — system instructions (committed), personality (personal), tools (personal). Inspired by [OpenClaw](https://github.com/nichochar/openclaw)
+- **Reference, don't assemble** — personal config files are read by the agent at runtime, not concatenated into CLAUDE.md. This lets the user (or the agent) edit them directly
+- **First-run setup via conversation** — no manual config step. The agent asks for name/language/tone on first message, then writes its own personality file
 - **`--resume` for conversation continuity** — session ID persisted to `.session` file
 - **`--permission-mode bypassPermissions`** — agent has full tool access (Bash, Read, Write, etc.)
 

@@ -53,12 +53,34 @@ const bot = new Bot(token);
 const projectDir = resolve(__dirname, "..");
 const agentDir = resolve(projectDir, "agent");
 
-// Copy agent files to runtime dir at startup
+// Copy agent files to runtime dir.
+// Only CLAUDE.md and meta.md are copied here. personality.md and tools.md are
+// personal config that lives in ~/.pincer/ — the agent reads them via the Read
+// tool when needed (referenced from CLAUDE.md). This lets the user (or the
+// agent itself) edit them directly without any assembly step.
 for (const file of ["CLAUDE.md", "meta.md"]) {
   const src = resolve(agentDir, file);
   if (existsSync(src)) {
     copyFileSync(src, resolve(agentHome, file));
-    log("info", `[init] copied agent ${file} to ${agentHome}`);
+    log("info", `[init] copied agent/${file} to ${agentHome}`);
+  }
+}
+
+// Seed default personal config from .example templates if missing.
+// These files are never overwritten — the user (or agent) owns them.
+let needsSetup = false;
+for (const file of ["personality.md", "tools.md"]) {
+  const dest = resolve(agentHome, file);
+  if (!existsSync(dest)) {
+    const example = resolve(agentDir, `${file}.example`);
+    if (existsSync(example)) {
+      let content = readFileSync(example, "utf-8");
+      // Auto-fill the source code path so the agent can find its own repo
+      content = content.replace("/path/to/your/pincer/clone/", projectDir + "/");
+      writeFileSync(dest, content);
+      log("info", `[init] seeded ${file} from example template`);
+      if (file === "personality.md") needsSetup = true;
+    }
   }
 }
 
@@ -226,7 +248,7 @@ function getRecentConversation(maxEntries = 20): string {
   }
 }
 
-const dateFormatter = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
+const dateFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
 
 bot.on("message:text", async (ctx) => {
   // Only respond to allowed chat
@@ -253,16 +275,16 @@ bot.on("message:text", async (ctx) => {
     if (sessionId) {
       try {
         memoryResponse = await claude(
-          "[Commande système] Ta session va être reset. " +
-          "Relis ~/.pincer/memory.md et mets-le à jour si cette conversation contient quelque chose à retenir. " +
-          "Réponds uniquement ce que tu as sauvegardé, ou 'Rien à sauvegarder' si rien de notable."
+          "[System command] Your session is about to be reset. " +
+          "Re-read ~/.pincer/memory.md and update it if this conversation contains anything worth remembering. " +
+          "Reply only with what you saved, or 'Nothing to save' if nothing notable."
         );
       } catch (err) {
         log("error", "[/new] memory save failed:", (err as Error).message);
-        memoryResponse = "(erreur lors de la sauvegarde mémoire)";
+        memoryResponse = "(memory save error)";
       }
     } else {
-      memoryResponse = "Pas de session active";
+      memoryResponse = "No active session";
     }
 
     // Step 2: archive conversations.jsonl
@@ -293,7 +315,16 @@ bot.on("message:text", async (ctx) => {
   }
 
   const now = dateFormatter.format(new Date());
-  const prompt = `[${now}]\n${text}`;
+  let prompt = `[${now}]\n${text}`;
+
+  // First-run: inject setup prompt before the user's first message
+  if (needsSetup) {
+    prompt = `[System] This is a fresh install. personality.md contains placeholder values. ` +
+      `Before responding to the user's message, ask them for a name, language, and preferred tone for this agent. ` +
+      `Then write personality.md with their answers. Keep it short — 3 questions max.\n\n${prompt}`;
+    needsSetup = false;
+  }
+
   logConversation("user", text);
 
   // Acknowledge receipt with a reaction
@@ -325,7 +356,7 @@ bot.on("message:text", async (ctx) => {
           sessionId = null;
           saveSession();
           const contextPrompt = history
-            ? `[Note système : ta session précédente a crashé (${claudeErr?.isTimeout ? "timeout — probablement une popup système qui a bloqué le terminal" : "erreur inconnue"}). Voici l'historique récent de notre conversation pour que tu gardes le contexte :\n\n${history}\n\nMaintenant, le dernier message de l'utilisateur était :]\n\n${text}`
+            ? `[System note: your previous session crashed (${claudeErr?.isTimeout ? "timeout — likely a system popup that blocked the terminal" : "unknown error"}). Here is recent conversation history for context:\n\n${history}\n\nThe user's last message was:]\n\n${text}`
             : text;
           log("info", `[bridge] context recovery prompt (${contextPrompt.length} chars): ${contextPrompt}`);
           response = await claude(contextPrompt);
@@ -340,8 +371,8 @@ bot.on("message:text", async (ctx) => {
       logConversation("pincer", response);
       await ctx.reply(response);
     } else {
-      logConversation("pincer", "(pas de réponse)");
-      await ctx.reply("(pas de réponse)");
+      logConversation("pincer", "(no response)");
+      await ctx.reply("(no response)");
     }
     // Remove 👀 reaction
     try {
@@ -350,8 +381,8 @@ bot.on("message:text", async (ctx) => {
       log("error", "[reaction] failed to clear reaction:", (err as Error).message);
     }
   } catch (err) {
-    logConversation("pincer", "(erreur après tous les retries)");
-    await ctx.reply("Désolé, j'ai eu un problème technique et je n'arrive pas à récupérer. Réessaie dans quelques instants.");
+    logConversation("pincer", "(error after all retries)");
+    await ctx.reply("Sorry, I had a technical issue and couldn't recover. Please try again in a moment.");
   }
 });
 
@@ -361,7 +392,7 @@ bot.catch((err) => {
 
 // Register bot commands for Telegram autocompletion
 await bot.api.setMyCommands([
-  { command: "new", description: "Sauvegarder la mémoire et reset la session" },
+  { command: "new", description: "Save memory and reset session" },
 ]);
 
 log("info", "Pincer bridge started — listening for Telegram messages...");

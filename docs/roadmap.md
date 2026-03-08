@@ -1,65 +1,75 @@
 # Pincer — Roadmap
 
-## Décisions d'architecture
+## Architecture Decisions
 
-### CLAUDE.md natif vs fichiers OpenClaw (SOUL.md, AGENTS.md, etc.)
+### Native CLAUDE.md vs OpenClaw files (SOUL.md, AGENTS.md, etc.)
 
-On utilise les mécanismes natifs de Claude Code plutôt que de reproduire le système de fichiers OpenClaw.
+We use Claude Code's native mechanisms rather than reproducing OpenClaw's file system.
 
-**Ce qu'on gagne :**
-- Zéro boilerplate (pas de boot sequence "lis SOUL.md puis USER.md...")
-- Héritage global -> projet (~/.claude/CLAUDE.md + agent/CLAUDE.md)
-- Crons + /loop natifs (pas besoin de heartbeat custom)
+**What we gain:**
+- Zero boilerplate (no boot sequence "read SOUL.md then USER.md...")
+- Global → project inheritance (~/.claude/CLAUDE.md + agent/CLAUDE.md)
+- Native crons (no custom heartbeat needed). Note: `/loop` is not usable — the agent runs via `claude -p` (one-shot), not interactive sessions
 
-**Ce qu'on perd (acceptable) :**
-- Journal quotidien structuré (la mémoire est thématique, pas chronologique)
-- Portabilité multi-LLM (pas un objectif)
+**What we lose (acceptable):**
+- Structured daily journal (memory is thematic, not chronological)
+- Multi-LLM portability (not a goal)
 
-### Séparation CLAUDE.md racine / agent/CLAUDE.md
+### Root CLAUDE.md / agent/CLAUDE.md separation
 
-CLAUDE.md servait initialement aux deux usages (dev + personnalité agent). Séparé car :
-- Conflit de contexte : le dev a besoin d'instructions projet, le bridge a besoin de personnalité agent
-- Le bridge lance claude depuis `agent/`, il charge naturellement `agent/CLAUDE.md`
+CLAUDE.md originally served both purposes (dev + agent personality). Separated because:
+- Context conflict: the dev needs project instructions, the bridge needs agent personality
+- The bridge launches claude from `agent/`, it naturally loads `agent/CLAUDE.md`
 
-### Mémoire : memory.md vs auto-memory Claude Code
+### Three-layer config (inspired by OpenClaw)
 
-L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas en mode `-p` (one-shot). L'agent gère sa propre mémoire dans `~/.pincer/memory.md` via Read/Write.
+The agent's context is split into three layers, assembled at startup:
+1. **`personality.md`** (personal, not committed) — who the agent is (name, tone, traits)
+2. **`tools.md`** (personal, not committed) — what the user has (integrations, paths, platform)
+3. **`agent/CLAUDE.md`** (committed) — how the framework works (memory, architecture, restart)
 
-## Étapes
+The bridge concatenates all three into `~/.pincer/CLAUDE.md` at startup. If personal files are missing, `.example` templates are copied as defaults. This allows the repo to be public without exposing personal config.
 
-### Phase 1 — Fondations (done)
-1. [x] Brainstorm architecture
-2. [x] Init git + fichiers de base
-3. [x] Setup bot Telegram via BotFather
-4. [x] scripts/telegram.sh fonctionnel
-5. [x] Bridge bidirectionnel Telegram
-6. [x] Historique de conversation (--resume)
-7. [x] Séparation CLAUDE.md projet / agent
-8. [x] Mémoire persistante (agent/memory.md)
-9. [x] Permissions agent (bypassPermissions)
-10. [x] Session persistée sur disque
-11. [x] Repo GitHub + README
+### Memory: memory.md vs Claude Code auto-memory
 
-### Phase 2 — Robustesse & ops (done)
-12. [x] Séparation runtime (~/.pincer/) vs sources (repo)
-13. [x] Lancement auto du bridge (launchd + KeepAlive)
+Claude Code's auto-memory (`~/.claude/projects/*/memory/`) doesn't work in `-p` mode (one-shot). The agent manages its own memory in `~/.pincer/memory.md` via Read/Write.
+
+## Phases
+
+### Phase 1 — Foundations (done)
+1. [x] Architecture brainstorm
+2. [x] Init git + base files
+3. [x] Setup Telegram bot via BotFather
+4. [x] scripts/telegram.sh working
+5. [x] Bidirectional Telegram bridge
+6. [x] Conversation history (--resume)
+7. [x] Separate project / agent CLAUDE.md
+8. [x] Persistent memory (agent/memory.md)
+9. [x] Agent permissions (bypassPermissions)
+10. [x] Session persisted to disk
+11. [x] GitHub repo + README
+
+### Phase 2 — Robustness & ops (done)
+12. [x] Separate runtime (~/.pincer/) from sources (repo)
+13. [x] Auto-start bridge (launchd + KeepAlive)
 14. [x] Self-restart (scripts/restart-bridge.sh + launchd)
-15. [x] Réactions Telegram (👀 réception, 👍 réponse envoyée)
-16. [x] Logs persistants (~/.pincer/bridge.log)
-17. [x] Historique conversations structuré (~/.pincer/conversations.jsonl)
-18. [x] Retry résilient (même session → session fraîche avec context recovery)
-19. [x] Documentation architecture dans agent/CLAUDE.md
+15. [x] Telegram reactions (👀 received, 👍 response sent)
+16. [x] Persistent logs (~/.pincer/bridge.log)
+17. [x] Structured conversation history (~/.pincer/conversations.jsonl)
+18. [x] Resilient retry (same session → fresh session with context recovery)
+19. [x] Architecture documentation in agent/CLAUDE.md
 
-### Phase 3 — Intégrations
-20. [ ] Webhook Slack
-21. [ ] Premier cron utile (résumé emails/calendar)
+### Phase 3 — Integrations
+20. [ ] Slack webhook
+21. [ ] First useful cron (email/calendar summary)
 22. [ ] Backup memory.md
 
 ### Phase 4 — Open source readiness
-23. [ ] Séparer agent/CLAUDE.md en template générique (commité) + config perso (gitignored, copié au setup)
+23. [x] Three-layer config: personality (who) + tools (what) + system (how)
+24. [ ] Translate all docs and code to English
 
-### Phase 5 — Évolutions
-24. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
-25. [ ] Typing indicator continu
-26. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
-27. [ ] Commandes Telegram (/reset, /status, etc.)
+### Phase 5 — Evolutions
+25. [ ] Long message handling (Telegram 4096 char chunking)
+26. [ ] Continuous typing indicator
+27. [ ] Smart notifications (filtering, priority, quiet hours)
+28. [ ] Telegram commands (/reset, /status, etc.)

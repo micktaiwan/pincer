@@ -11,44 +11,46 @@ LAST_FILE="$AGENT_HOME/last-reminder.md"
 
 mkdir -p "$AGENT_HOME"
 
-# Copy agent CLAUDE.md to runtime dir
+# Copy system files to runtime dir (personality.md and tools.md are personal
+# config read by the agent at runtime — no assembly needed)
 cp "$PINCER_DIR/agent/CLAUDE.md" "$AGENT_HOME/CLAUDE.md"
+cp "$PINCER_DIR/agent/meta.md" "$AGENT_HOME/meta.md"
 
 # Collect all track.md contents
 TRACK_CONTENTS=""
-for f in $(find /Users/mickaelfm/projects -name "track.md" -maxdepth 4 2>/dev/null); do
+while IFS= read -r -d '' f; do
   TRACK_CONTENTS="$TRACK_CONTENTS
 --- $f ---
 $(cat "$f")
 "
-done
+done < <(find "$HOME/projects" -name "track.md" -maxdepth 4 -print0 2>/dev/null)
 
 LAST_CONTENTS=""
 if [ -f "$LAST_FILE" ]; then
   LAST_CONTENTS="
---- Dernier rappel envoyé ---
+--- Last reminder sent ---
 $(cat "$LAST_FILE")
 "
 fi
 
-PROMPT="Tu es Pincer, assistant de Mickael. Voici les fichiers track.md de ses projets :
+PROMPT="You are Pincer. Here are the track.md files from the user's projects:
 
 $TRACK_CONTENTS
 $LAST_CONTENTS
 
-Choisis 3 tâches EN COURS (pas terminées) qui semblent les plus importantes ou actionnables.
-Si un dernier rappel est fourni, évite de renvoyer les mêmes 3 — varie si possible (sauf si rien d'autre n'a bougé).
+Pick 3 IN PROGRESS tasks (not completed) that seem most important or actionable.
+If a previous reminder is provided, avoid sending the same 3 — vary if possible (unless nothing else has changed).
 
-Envoie un message Telegram avec exactement ce format (pas de préambule, pas de conclusion) :
+Send a Telegram message with exactly this format (no preamble, no conclusion):
 
-📌 Rappel tâches en cours
+📌 Task reminder
 
-• [projet] — description courte
-• [projet] — description courte
-• [projet] — description courte
+• [project] — short description
+• [project] — short description
+• [project] — short description
 
-Utilise $PINCER_DIR/scripts/telegram.sh pour envoyer.
-Puis écris les 3 tâches choisies (une par ligne, même format) dans $AGENT_HOME/last-reminder.md pour la prochaine fois."
+Use $PINCER_DIR/scripts/telegram.sh to send.
+Then write the 3 chosen tasks (one per line, same format) to $AGENT_HOME/last-reminder.md for next time."
 
 cd "$AGENT_HOME"
 claude --dangerously-skip-permissions -p "$PROMPT"

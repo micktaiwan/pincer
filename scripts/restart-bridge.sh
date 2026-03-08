@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Notify user before restarting
-"$SCRIPT_DIR/telegram.sh" "Je redémarre... 🔄"
+"$SCRIPT_DIR/telegram.sh" "Restarting... 🔄"
 
 # Kill the bridge — launchd will restart it
 pkill -f "pincer/bridge/index.ts" || true
