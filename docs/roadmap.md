@@ -55,8 +55,11 @@ L'auto-memory de Claude Code (`~/.claude/projects/*/memory/`) ne fonctionne pas 
 21. [ ] Premier cron utile (résumé emails/calendar)
 22. [ ] Backup memory.md
 
-### Phase 4 — Évolutions
-23. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
-24. [ ] Typing indicator continu
-25. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
-26. [ ] Commandes Telegram (/reset, /status, etc.)
+### Phase 4 — Open source readiness
+23. [ ] Séparer agent/CLAUDE.md en template générique (commité) + config perso (gitignored, copié au setup)
+
+### Phase 5 — Évolutions
+24. [ ] Gestion des messages longs (chunking Telegram 4096 chars)
+25. [ ] Typing indicator continu
+26. [ ] Notifications intelligentes (filtrage, priorité, heures calmes)
+27. [ ] Commandes Telegram (/reset, /status, etc.)
