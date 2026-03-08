@@ -397,3 +397,12 @@ await bot.api.setMyCommands([
 
 log("info", "Pincer bridge started — listening for Telegram messages...");
 bot.start();
+
+// Notify on Telegram that the bridge is back online
+if (allowedChatId) {
+  bot.api.sendMessage(allowedChatId, "Back online ✅").then(() => {
+    log("info", "[init] startup notification sent");
+  }).catch((err) => {
+    log("error", "[init] failed to send startup notification:", (err as Error).message);
+  });
+}
