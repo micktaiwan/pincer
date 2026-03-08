@@ -107,6 +107,14 @@ Send messages directly (useful for crons and automation):
 ./scripts/slack.sh "Hello from Pincer"
 ```
 
+## Security
+
+Pincer runs `claude` with `--permission-mode bypassPermissions`, meaning the agent executes shell commands without confirmation. This is by design — an autonomous assistant needs full tool access.
+
+The main security boundary is the **`TELEGRAM_CHAT_ID` filter**: the bridge only processes messages from your chat ID. If your `TELEGRAM_BOT_TOKEN` leaks, an attacker could send messages to the bot, but they would be ignored unless they also know your chat ID.
+
+**Keep your `.env` secret.** If both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are compromised, an attacker can send arbitrary prompts that the agent will execute with full shell access on your machine.
+
 ## License
 
 MIT

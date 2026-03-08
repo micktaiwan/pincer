@@ -10,7 +10,7 @@ Personal assistant based on Claude Code, communicating via Telegram and Slack.
 
 This project has three distinct spaces that must be clearly differentiated to avoid logic errors:
 
-### 1. Source repo (`/Users/mickaelfm/projects/perso/pincer/`)
+### 1. Source repo (`$PINCER_ROOT`)
 
 Version-controlled source code in git. This is where we develop.
 
