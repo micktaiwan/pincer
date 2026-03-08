@@ -101,8 +101,8 @@ Personal config files (`personality.md`, `tools.md`) are **referenced** from `ag
 ## Docs
 
 - `docs/roadmap.md` — project phases and next steps
-- `docs/agent-collaboration.md` — brainstorm on Pincer x Eko collaboration (Organizer's agent)
-- `docs/autonomous-dev.md` — brainstorm on Pincer as autonomous developer (overnight, /loop, crons)
+- `docs/agent-use-cases.md` — persistent agent use cases, tips, troubleshooting, and limitations
+- `docs/persistent-agent-spec.md` — persistent agent architecture and design spec
 
 ## Config
 

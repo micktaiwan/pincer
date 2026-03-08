@@ -1,42 +1,20 @@
 import { Bot } from "grammy";
 import { spawn, execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, appendFileSync, renameSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, renameSync, statSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+
+import {
+  agentHome, logFile, costsFile, convFile,
+  log, logCost, extractText, ClaudeError,
+  parseJsonl, formatDuration, logConversation, getRecentConversation, dateFormatter,
+} from "./utils.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = resolve(__dirname, "../.env");
 
-// Agent runtime directory — separate from the source repo
-const agentHome = resolve(homedir(), ".pincer");
+// Ensure agent runtime directory exists
 mkdirSync(agentHome, { recursive: true });
-
-// Persistent log file
-const logFile = resolve(agentHome, "bridge.log");
-
-// Cost tracking file
-const costsFile = resolve(agentHome, "costs.jsonl");
-
-function logCost(costUsd: number, durationMs: number, durationApiMs: number) {
-  const entry = {
-    ts: new Date().toISOString(),
-    cost_usd: costUsd,
-    duration_ms: durationMs,
-    duration_api_ms: durationApiMs,
-    session: sessionId?.slice(0, 8) || null,
-  };
-  try { appendFileSync(costsFile, JSON.stringify(entry) + "\n"); } catch { /* best effort */ }
-}
-
-function log(level: "info" | "error", ...args: unknown[]) {
-  const timestamp = new Date().toISOString();
-  const message = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
-  const line = `[${timestamp}] [${level}] ${message}\n`;
-  const consoleFn = level === "error" ? console.error : console.log;
-  consoleFn(message);
-  try { appendFileSync(logFile, line); } catch { /* best effort */ }
-}
 
 // Resolve claude binary path at startup (Node's PATH may not include homebrew/nvm dirs)
 let claudeBin = "claude";
@@ -68,10 +46,6 @@ const projectDir = resolve(__dirname, "..");
 const agentDir = resolve(projectDir, "agent");
 
 // Copy agent files to runtime dir.
-// Only CLAUDE.md and meta.md are copied here. personality.md and tools.md are
-// personal config that lives in ~/.pincer/ — the agent reads them via the Read
-// tool when needed (referenced from CLAUDE.md). This lets the user (or the
-// agent itself) edit them directly without any assembly step.
 for (const file of ["CLAUDE.md", "meta.md"]) {
   const src = resolve(agentDir, file);
   if (existsSync(src)) {
@@ -81,7 +55,6 @@ for (const file of ["CLAUDE.md", "meta.md"]) {
 }
 
 // Seed default personal config from .example templates if missing.
-// These files are never overwritten — the user (or agent) owns them.
 let needsSetup = false;
 for (const file of ["personality.md", "tools.md"]) {
   const dest = resolve(agentHome, file);
@@ -89,7 +62,6 @@ for (const file of ["personality.md", "tools.md"]) {
     const example = resolve(agentDir, `${file}.example`);
     if (existsSync(example)) {
       let content = readFileSync(example, "utf-8");
-      // Auto-fill the source code path so the agent can find its own repo
       content = content.replace("/path/to/your/pincer/clone/", projectDir + "/");
       writeFileSync(dest, content);
       log("info", `[init] seeded ${file} from example template`);
@@ -113,16 +85,6 @@ function saveSession() {
   try {
     writeFileSync(sessionFile, sessionId || "");
   } catch { /* best effort */ }
-}
-
-function extractText(blocks: any[]): string {
-  return blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
-}
-
-class ClaudeError extends Error {
-  constructor(message: string, public readonly isTimeout: boolean = false) {
-    super(message);
-  }
 }
 
 function claude(prompt: string): Promise<string> {
@@ -155,13 +117,11 @@ function claude(prompt: string): Promise<string> {
         if (!line.trim()) continue;
         try {
           const data = JSON.parse(line);
-          // Capture session ID from init
           if (data.type === "system" && data.subtype === "init" && data.session_id) {
             sessionId = data.session_id;
             saveSession();
             log("info", `[claude] session: ${sessionId}`);
           }
-          // Log tool usage
           if (data.type === "assistant") {
             const blocks = data.message?.content || [];
             for (const b of blocks) {
@@ -172,18 +132,16 @@ function claude(prompt: string): Promise<string> {
             const text = extractText(blocks);
             if (text) resultText = text;
           }
-          // Log tool results
           if (data.type === "tool_result") {
             const status = data.is_error ? "error" : "ok";
             log("info", `[claude] tool_result (${status}): ${String(data.tool_use_id || "").slice(0, 20)}`);
           }
-          // Capture result text (final)
           if (data.type === "result" && data.subtype !== "error" && data.subtype !== "error_during_execution") {
             const blocks = data.result?.content || data.content || [];
             const text = extractText(blocks);
             if (text) resultText = text;
             const costUsd = Number(data.total_cost_usd ?? 0);
-            logCost(costUsd, data.duration_ms ?? 0, data.duration_api_ms ?? 0);
+            logCost(costUsd, data.duration_ms ?? 0, data.duration_api_ms ?? 0, sessionId);
           }
           if (data.type === "result" && (data.subtype === "error" || data.subtype === "error_during_execution")) {
             log("error", "[claude] error result:", data.error || data.result?.error);
@@ -202,7 +160,6 @@ function claude(prompt: string): Promise<string> {
     });
 
     child.on("close", (code) => {
-      // Process remaining buffer
       if (buffer.trim()) {
         try {
           const data = JSON.parse(buffer.trim());
@@ -240,48 +197,44 @@ function claude(prompt: string): Promise<string> {
   });
 }
 
-// Structured conversation log for context recovery
-const convFile = resolve(agentHome, "conversations.jsonl");
-
-function logConversation(role: "user" | "pincer", message: string) {
-  const entry = { ts: new Date().toISOString(), role, message };
-  try { appendFileSync(convFile, JSON.stringify(entry) + "\n"); } catch { /* best effort */ }
-}
-
-function getRecentConversation(maxEntries = 20): string {
-  const entries = parseJsonl<{ role: string; message: string }>(convFile).slice(-maxEntries);
-  return entries.map(e =>
-    `${e.role === "user" ? "user" : "Pincer"}: ${e.message}`
-  ).join("\n\n");
-}
-
-const dateFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
-
-function parseJsonl<T = any>(path: string): T[] {
-  try {
-    const raw = existsSync(path) ? readFileSync(path, "utf-8").trim() : "";
-    if (!raw) return [];
-    return raw.split("\n")
-      .map(l => { try { return JSON.parse(l); } catch { return null; } })
-      .filter(Boolean);
-  } catch { return []; }
-}
-
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${seconds}s`;
-}
-
 // Tracking for /status
 const startedAt = Date.now();
 let messageCount = 0;
 let lastMessageAt: number | null = null;
 
+// Import agent manager and MCP server (lazy — loaded after bot is created)
+import { createAgentManager } from "./agent-manager.js";
+import { createMcpServer } from "./mcp-server.js";
+import { routeMessage } from "./message-router.js";
+import { MCP_PORT, MAX_AGENTS, AGENT_TIMEOUT_MS } from "./types.js";
+
+const mcpPort = Number(env.MCP_PORT) || MCP_PORT;
+const maxAgents = Number(env.MAX_AGENTS) || MAX_AGENTS;
+const agentTimeoutMs = Number(env.AGENT_TIMEOUT_MS) || AGENT_TIMEOUT_MS;
+
+const agentManager = createAgentManager({
+  claudeBin,
+  agentHome,
+  mcpPort,
+  maxAgents,
+  agentTimeoutMs,
+  sendTelegram: async (text: string) => {
+    if (allowedChatId) {
+      const sent = await bot.api.sendMessage(allowedChatId, text);
+      return sent.message_id;
+    }
+    return 0;
+  },
+  logConversation,
+});
+
+const mcpServer = createMcpServer({
+  port: mcpPort,
+  agentManager,
+  log,
+});
+
 bot.on("message:text", async (ctx) => {
-  // Only respond to allowed chat
   if (allowedChatId && String(ctx.chat.id) !== allowedChatId) {
     log("info", `[ignored] message from chat ${ctx.chat.id}`);
     return;
@@ -290,7 +243,7 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   log("info", `[message] ${text}`);
 
-  // /status — bridge health check (add "deep" for Claude diagnostic)
+  // /status — bridge health check
   if (/^\/status(@\w+)?(\s+deep)?$/i.test(text.trim())) {
     const isDeep = /deep$/i.test(text.trim());
     const uptimeStr = formatDuration(Math.floor((Date.now() - startedAt) / 1000));
@@ -312,11 +265,14 @@ bot.on("message:text", async (ctx) => {
       } catch { return 0; }
     })();
 
+    const activeAgents = agentManager.listActive();
+
     const lines = [
       `Uptime: ${uptimeStr}`,
       `Session: ${sessionId ? sessionId.slice(0, 8) + "…" : "none"}`,
       `Messages this session: ${messageCount}`,
       `Last activity: ${lastActivityStr}`,
+      `Active agents: ${activeAgents.length}`,
       `memory.md: ${fileSize(resolve(agentHome, "memory.md"))}`,
       `personality.md: ${fileSize(resolve(agentHome, "personality.md"))}`,
       `tools.md: ${fileSize(resolve(agentHome, "tools.md"))}`,
@@ -325,13 +281,21 @@ bot.on("message:text", async (ctx) => {
       `bridge.log: ${fileSize(logFile)}`,
       `Claude: ${claudeBin}`,
     ];
+
+    if (activeAgents.length > 0) {
+      lines.push("");
+      lines.push("Agents:");
+      for (const a of activeAgents) {
+        const elapsed = formatDuration(Math.floor((Date.now() - a.startedAt) / 1000));
+        lines.push(`  [${a.label}] ${a.status} (${elapsed})`);
+      }
+    }
+
     await ctx.reply(lines.join("\n"));
 
-    // Deep diagnostic only on explicit request (spawns a Claude call)
     if (isDeep) {
       await ctx.reply("Deeper check in progress…");
       await ctx.replyWithChatAction("typing");
-
       try {
         const diagnosticPrompt =
           "[System command — diagnostic mode]\n" +
@@ -382,13 +346,13 @@ bot.on("message:text", async (ctx) => {
 
       const fmt = (n: number) => `$${n.toFixed(2)}`;
       const first = entries[0]?.ts?.slice(0, 10) ?? "?";
-      const lines = [
+      const costLines = [
         `Today: ${fmt(totalToday)} (${countToday} calls)`,
         `Last 7 days: ${fmt(totalWeek)}`,
         `This month: ${fmt(totalMonth)}`,
         `All time: ${fmt(totalAll)} (${countAll} calls, since ${first})`,
       ];
-      await ctx.reply(lines.join("\n"));
+      await ctx.reply(costLines.join("\n"));
     } catch (err) {
       log("error", "[/cost] failed:", (err as Error).message);
       await ctx.reply("Failed to read cost data.");
@@ -396,12 +360,48 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
+  // /agents — list active persistent agents
+  if (/^\/agents(@\w+)?$/i.test(text.trim())) {
+    const active = agentManager.listActive();
+    if (active.length === 0) {
+      await ctx.reply("No active agents.");
+    } else {
+      const lines = active.map(a => {
+        const elapsed = formatDuration(Math.floor((Date.now() - a.startedAt) / 1000));
+        return `[${a.label}] ${a.status} — ${elapsed} — $${a.costUsd.toFixed(3)}`;
+      });
+      await ctx.reply(lines.join("\n"));
+    }
+    return;
+  }
+
+  // /kill — stop a persistent agent
+  const killMatch = text.trim().match(/^\/kill(@\w+)?\s+(.+)$/i);
+  if (killMatch) {
+    const target = killMatch[2].trim();
+    if (target.toLowerCase() === "all") {
+      const killed = agentManager.killAll();
+      await ctx.reply(killed > 0 ? `Killed ${killed} agent(s).` : "No active agents.");
+    } else {
+      const success = agentManager.kill(target);
+      await ctx.reply(success ? `Agent [${target}] killed.` : `No agent found with label or id "${target}".`);
+    }
+    return;
+  }
+
   messageCount++;
   lastMessageAt = Date.now();
 
-  // /new — save memory + reset session
+  // /new — save memory + reset session + kill all agents
   if (/^\/new(@\w+)?$/i.test(text.trim())) {
     log("info", "[/new] starting memory save + session reset");
+
+    // Kill all running agents first
+    const killedCount = agentManager.killAll();
+    if (killedCount > 0) {
+      log("info", `[/new] killed ${killedCount} agent(s)`);
+    }
+
     try {
       await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: "emoji", emoji: "👀" }]);
     } catch (err) {
@@ -410,7 +410,6 @@ bot.on("message:text", async (ctx) => {
     await ctx.replyWithChatAction("typing");
 
     let memoryResponse = "";
-    // Step 1: ask current session to save anything important to memory
     if (sessionId) {
       try {
         memoryResponse = await claude(
@@ -426,17 +425,15 @@ bot.on("message:text", async (ctx) => {
       memoryResponse = "No active session";
     }
 
-    // Step 2: archive conversations.jsonl
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const archivePath = resolve(agentHome, `conversations-${ts}.jsonl`);
     try {
       renameSync(convFile, archivePath);
       log("info", `[/new] archived conversations → ${archivePath}`);
     } catch {
-      // No file to archive — that's fine
+      // No file to archive
     }
 
-    // Step 3: clear session
     sessionId = null;
     messageCount = 0;
     saveSession();
@@ -454,10 +451,78 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  const now = dateFormatter.format(new Date());
-  let prompt = `[${now}]\n${text}`;
+  // /agent <prompt> — spawn a persistent agent
+  const agentMatch = text.trim().match(/^\/agent(@\w+)?\s+(.+)$/is);
+  if (agentMatch) {
+    const task = agentMatch[2].trim();
+    const active = agentManager.listActive();
+    if (active.length >= maxAgents) {
+      await ctx.reply(`${active.length} agents already running (max ${maxAgents}). Use /kill to stop one first.`);
+      return;
+    }
 
-  // First-run: inject setup prompt before the user's first message
+    logConversation("user", text);
+    try {
+      const agentId = await agentManager.spawn(task);
+      const agent = agentManager.get(agentId);
+      await ctx.reply(`Agent [${agent?.label || agentId.slice(0, 6)}] spawned.`);
+    } catch (err) {
+      log("error", "[/agent] spawn failed:", (err as Error).message);
+      await ctx.reply("Failed to spawn agent — check bridge.log.");
+    }
+    return;
+  }
+
+  // Try to route to a waiting agent (reply-to or single-waiting)
+  const routed = routeMessage({
+    text,
+    replyToMessageId: ctx.message.reply_to_message?.message_id ?? null,
+    agentManager,
+    log,
+  });
+
+  if (routed.action === "routed") {
+    // Message was delivered to a waiting agent
+    return;
+  }
+
+  if (routed.action === "follow-up") {
+    // User replied to a finished agent's message — spawn a new agent with old context
+    const active = agentManager.listActive();
+    if (active.length >= maxAgents) {
+      await ctx.reply(`${active.length} agents already running (max ${maxAgents}). Use /kill to stop one first.`);
+      return;
+    }
+    try {
+      const newId = await agentManager.spawnFollowUp(routed.agentId, text);
+      const agent = agentManager.get(newId);
+      await ctx.reply(`Follow-up agent [${agent?.label || newId.slice(0, 6)}] spawned.`);
+    } catch (err) {
+      log("error", "[follow-up] spawn failed:", (err as Error).message);
+      await ctx.reply("Failed to spawn follow-up agent — check bridge.log.");
+    }
+    return;
+  }
+
+  if (routed.action === "ambiguous") {
+    const waiting = agentManager.listActive().filter(a => a.status === "waiting");
+    const labels = waiting.map(a => `[${a.label}]`).join(", ");
+    await ctx.reply(`Multiple agents are waiting: ${labels}. Reply to the specific message to answer.`);
+    return;
+  }
+
+  // Regular conversational flow
+  const now = dateFormatter.format(new Date());
+  let prompt = `[${now}]\n`;
+
+  // Inject pending agent summaries so the session knows what agents did
+  const agentSummaries = agentManager.drainPendingSummaries();
+  if (agentSummaries) {
+    prompt += `[System — recent agent activity for context]\n${agentSummaries}\n\n[User message]\n`;
+  }
+
+  prompt += text;
+
   if (needsSetup) {
     prompt = `[System] This is a fresh install. personality.md contains placeholder values. ` +
       `Before responding to the user's message, ask them for a name, language, and preferred tone for this agent. ` +
@@ -467,14 +532,12 @@ bot.on("message:text", async (ctx) => {
 
   logConversation("user", text);
 
-  // Acknowledge receipt with a reaction
   try {
     await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: "emoji", emoji: "👀" }]);
   } catch (err) {
     log("error", "[reaction] failed to set 👀:", (err as Error).message);
   }
 
-  // Show typing indicator
   await ctx.replyWithChatAction("typing");
 
   try {
@@ -484,13 +547,11 @@ bot.on("message:text", async (ctx) => {
     } catch (err) {
       const claudeErr = err instanceof ClaudeError ? err : null;
 
-      // Retry 1: same session (transient error like timeout from permission popup)
       if (sessionId) {
         log("info", `[bridge] retry 1 — same session (${claudeErr?.isTimeout ? "timeout" : "error"})`);
         try {
           response = await claude(prompt);
         } catch {
-          // Retry 2: fresh session with conversation context
           log("info", "[bridge] retry 2 — fresh session with context recovery");
           const history = getRecentConversation();
           sessionId = null;
@@ -502,7 +563,6 @@ bot.on("message:text", async (ctx) => {
           response = await claude(contextPrompt);
         }
       } else {
-        // No session to retry — start fresh
         log("info", "[bridge] no session to retry — fresh start");
         response = await claude(prompt);
       }
@@ -514,7 +574,6 @@ bot.on("message:text", async (ctx) => {
       logConversation("pincer", "(no response)");
       await ctx.reply("(no response)");
     }
-    // Remove 👀 reaction
     try {
       await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, []);
     } catch (err) {
@@ -535,7 +594,13 @@ await bot.api.setMyCommands([
   { command: "new", description: "Save memory and reset session" },
   { command: "status", description: "Bridge health check" },
   { command: "cost", description: "Spending summary" },
+  { command: "agent", description: "Spawn a persistent agent for a task" },
+  { command: "agents", description: "List active persistent agents" },
+  { command: "kill", description: "Stop an agent (label or 'all')" },
 ]);
+
+// Start MCP server
+mcpServer.start();
 
 log("info", "Pincer bridge started — listening for Telegram messages...");
 bot.start();

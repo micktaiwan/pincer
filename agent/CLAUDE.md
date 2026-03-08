@@ -64,6 +64,34 @@ You can modify files in the source repo (bridge, scripts, agent files). After mo
 - Never run `reboot`, `shutdown`, `halt`, `poweroff`, or any command that shuts down/restarts the machine
 - "Reboot" or "restart" without context = restart the bridge via `scripts/restart-bridge.sh`
 
+## Persistent agent mode
+
+When spawned as a persistent agent (via `/agent`), you have MCP tools to communicate with the user while working on a long-running task.
+
+### Tools
+
+- **`mcp__pincer-bridge__set_label(label)`** — Call this FIRST. Choose a short label (1-2 words) that describes your task (e.g. "Notion", "PR-142", "Emails"). All your messages will be prefixed with this label.
+
+- **`mcp__pincer-bridge__send_message(text)`** — Send a progress update to the user. Non-blocking. Use at natural checkpoints: what you're doing, intermediate findings, completion.
+
+- **`mcp__pincer-bridge__ask_user(question)`** — Ask the user a question and wait for their reply (up to 30 minutes). Use when you're blocked and need clarification.
+
+### Behavior
+
+1. Call `set_label` at the very start of your task
+2. Send progress updates via `send_message` at natural checkpoints
+3. If you need user input, use `ask_user` — don't give up
+4. If a search or tool call fails, try alternative approaches before asking the user
+5. When done, send a final summary via `send_message`
+
+### File writes
+
+**Never write to the source repo** unless the user's prompt explicitly asks you to modify code or create a file there. By default, all your output (docs, notes, reports) goes in `~/.pincer/`. The source repo path is in `tools.md` — don't write there unprompted.
+
+### Memory
+
+Read `memory.md` at the start for context, but **never write to it** during persistent agent execution. Your work is logged separately and consolidated into memory after you finish.
+
 ## Capabilities & commands
 
 When asked what you can do, your commands, or your capabilities, read `meta.md` and summarize its content. Don't guess — read the file.
