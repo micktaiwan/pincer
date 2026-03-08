@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { spawn, execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, appendFileSync, renameSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -53,11 +53,13 @@ const bot = new Bot(token);
 const projectDir = resolve(__dirname, "..");
 const agentDir = resolve(projectDir, "agent");
 
-// Copy agent CLAUDE.md to runtime dir at startup
-const agentClaudeMd = resolve(agentDir, "CLAUDE.md");
-if (existsSync(agentClaudeMd)) {
-  copyFileSync(agentClaudeMd, resolve(agentHome, "CLAUDE.md"));
-  log("info", `[init] copied agent CLAUDE.md to ${agentHome}`);
+// Copy agent files to runtime dir at startup
+for (const file of ["CLAUDE.md", "meta.md"]) {
+  const src = resolve(agentDir, file);
+  if (existsSync(src)) {
+    copyFileSync(src, resolve(agentHome, file));
+    log("info", `[init] copied agent ${file} to ${agentHome}`);
+  }
 }
 
 // Session ID for conversation continuity (persisted to disk)
@@ -75,6 +77,10 @@ function saveSession() {
   try {
     writeFileSync(sessionFile, sessionId || "");
   } catch { /* best effort */ }
+}
+
+function extractText(blocks: any[]): string {
+  return blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
 }
 
 class ClaudeError extends Error {
@@ -95,7 +101,7 @@ function claude(prompt: string): Promise<string> {
     const child = spawn(claudeBin, args, {
       cwd: agentHome,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      env: process.env,
     });
 
     child.stdin.end();
@@ -127,7 +133,7 @@ function claude(prompt: string): Promise<string> {
                 log("info", `[claude] tool_use: ${b.name} ${JSON.stringify(b.input)}`);
               }
             }
-            const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+            const text = extractText(blocks);
             if (text) resultText = text;
           }
           // Log tool results
@@ -138,7 +144,7 @@ function claude(prompt: string): Promise<string> {
           // Capture result text (final)
           if (data.type === "result" && data.subtype !== "error" && data.subtype !== "error_during_execution") {
             const blocks = data.result?.content || data.content || [];
-            const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+            const text = extractText(blocks);
             if (text) resultText = text;
             log("info", `[claude] cost: $${Number(data.total_cost_usd ?? 0).toFixed(2)} duration: ${data.duration_ms}ms (api: ${data.duration_api_ms}ms)`);
           }
@@ -165,12 +171,12 @@ function claude(prompt: string): Promise<string> {
           const data = JSON.parse(buffer.trim());
           if (data.type === "assistant") {
             const blocks = data.message?.content || [];
-            const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+            const text = extractText(blocks);
             if (text) resultText = text;
           }
-          if (data.type === "result" && data.subtype !== "error") {
+          if (data.type === "result" && data.subtype !== "error" && data.subtype !== "error_during_execution") {
             const blocks = data.result?.content || data.content || [];
-            const text = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+            const text = extractText(blocks);
             if (text) resultText = text;
           }
         } catch { /* skip */ }
@@ -220,6 +226,8 @@ function getRecentConversation(maxEntries = 20): string {
   }
 }
 
+const dateFormatter = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
+
 bot.on("message:text", async (ctx) => {
   // Only respond to allowed chat
   if (allowedChatId && String(ctx.chat.id) !== allowedChatId) {
@@ -229,6 +237,63 @@ bot.on("message:text", async (ctx) => {
 
   const text = ctx.message.text;
   log("info", `[message] ${text}`);
+
+  // /new — save memory + reset session
+  if (/^\/new(@\w+)?$/i.test(text.trim())) {
+    log("info", "[/new] starting memory save + session reset");
+    try {
+      await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: "emoji", emoji: "👀" }]);
+    } catch (err) {
+      log("error", "[reaction] failed to set 👀:", (err as Error).message);
+    }
+    await ctx.replyWithChatAction("typing");
+
+    let memoryResponse = "";
+    // Step 1: ask current session to save anything important to memory
+    if (sessionId) {
+      try {
+        memoryResponse = await claude(
+          "[Commande système] Ta session va être reset. " +
+          "Relis ~/.pincer/memory.md et mets-le à jour si cette conversation contient quelque chose à retenir. " +
+          "Réponds uniquement ce que tu as sauvegardé, ou 'Rien à sauvegarder' si rien de notable."
+        );
+      } catch (err) {
+        log("error", "[/new] memory save failed:", (err as Error).message);
+        memoryResponse = "(erreur lors de la sauvegarde mémoire)";
+      }
+    } else {
+      memoryResponse = "Pas de session active";
+    }
+
+    // Step 2: archive conversations.jsonl
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const archivePath = resolve(agentHome, `conversations-${ts}.jsonl`);
+    try {
+      renameSync(convFile, archivePath);
+      log("info", `[/new] archived conversations → ${archivePath}`);
+    } catch {
+      // No file to archive — that's fine
+    }
+
+    // Step 3: clear session
+    sessionId = null;
+    saveSession();
+    log("info", "[/new] session reset");
+
+    const reply = `${memoryResponse}\n\nSession reset.`;
+    logConversation("user", "/new");
+    logConversation("pincer", reply);
+    await ctx.reply(reply);
+    try {
+      await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, []);
+    } catch (err) {
+      log("error", "[reaction] failed to clear reaction:", (err as Error).message);
+    }
+    return;
+  }
+
+  const now = dateFormatter.format(new Date());
+  const prompt = `[${now}]\n${text}`;
   logConversation("user", text);
 
   // Acknowledge receipt with a reaction
@@ -244,7 +309,7 @@ bot.on("message:text", async (ctx) => {
   try {
     let response: string;
     try {
-      response = await claude(text);
+      response = await claude(prompt);
     } catch (err) {
       const claudeErr = err instanceof ClaudeError ? err : null;
 
@@ -252,7 +317,7 @@ bot.on("message:text", async (ctx) => {
       if (sessionId) {
         log("info", `[bridge] retry 1 — same session (${claudeErr?.isTimeout ? "timeout" : "error"})`);
         try {
-          response = await claude(text);
+          response = await claude(prompt);
         } catch {
           // Retry 2: fresh session with conversation context
           log("info", "[bridge] retry 2 — fresh session with context recovery");
@@ -268,7 +333,7 @@ bot.on("message:text", async (ctx) => {
       } else {
         // No session to retry — start fresh
         log("info", "[bridge] no session to retry — fresh start");
-        response = await claude(text);
+        response = await claude(prompt);
       }
     }
     if (response) {
@@ -278,11 +343,11 @@ bot.on("message:text", async (ctx) => {
       logConversation("pincer", "(pas de réponse)");
       await ctx.reply("(pas de réponse)");
     }
-    // Mark as done
+    // Remove 👀 reaction
     try {
-      await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [{ type: "emoji", emoji: "👍" }]);
+      await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, []);
     } catch (err) {
-      log("error", "[reaction] failed to set ✅:", (err as Error).message);
+      log("error", "[reaction] failed to clear reaction:", (err as Error).message);
     }
   } catch (err) {
     logConversation("pincer", "(erreur après tous les retries)");
@@ -293,6 +358,11 @@ bot.on("message:text", async (ctx) => {
 bot.catch((err) => {
   log("error", "[bot error]", err.message);
 });
+
+// Register bot commands for Telegram autocompletion
+await bot.api.setMyCommands([
+  { command: "new", description: "Sauvegarder la mémoire et reset la session" },
+]);
 
 log("info", "Pincer bridge started — listening for Telegram messages...");
 bot.start();
