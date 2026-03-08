@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { spawn, execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, appendFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, appendFileSync, renameSync, statSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -14,6 +14,20 @@ mkdirSync(agentHome, { recursive: true });
 
 // Persistent log file
 const logFile = resolve(agentHome, "bridge.log");
+
+// Cost tracking file
+const costsFile = resolve(agentHome, "costs.jsonl");
+
+function logCost(costUsd: number, durationMs: number, durationApiMs: number) {
+  const entry = {
+    ts: new Date().toISOString(),
+    cost_usd: costUsd,
+    duration_ms: durationMs,
+    duration_api_ms: durationApiMs,
+    session: sessionId?.slice(0, 8) || null,
+  };
+  try { appendFileSync(costsFile, JSON.stringify(entry) + "\n"); } catch { /* best effort */ }
+}
 
 function log(level: "info" | "error", ...args: unknown[]) {
   const timestamp = new Date().toISOString();
@@ -168,7 +182,8 @@ function claude(prompt: string): Promise<string> {
             const blocks = data.result?.content || data.content || [];
             const text = extractText(blocks);
             if (text) resultText = text;
-            log("info", `[claude] cost: $${Number(data.total_cost_usd ?? 0).toFixed(2)} duration: ${data.duration_ms}ms (api: ${data.duration_api_ms}ms)`);
+            const costUsd = Number(data.total_cost_usd ?? 0);
+            logCost(costUsd, data.duration_ms ?? 0, data.duration_api_ms ?? 0);
           }
           if (data.type === "result" && (data.subtype === "error" || data.subtype === "error_during_execution")) {
             log("error", "[claude] error result:", data.error || data.result?.error);
@@ -234,21 +249,36 @@ function logConversation(role: "user" | "pincer", message: string) {
 }
 
 function getRecentConversation(maxEntries = 20): string {
-  try {
-    const content = readFileSync(convFile, "utf-8");
-    const entries = content.trim().split("\n")
-      .map(l => { try { return JSON.parse(l); } catch { return null; } })
-      .filter(Boolean)
-      .slice(-maxEntries);
-    return entries.map((e: { role: string; message: string }) =>
-      `${e.role === "user" ? "user" : "Pincer"}: ${e.message}`
-    ).join("\n\n");
-  } catch {
-    return "";
-  }
+  const entries = parseJsonl<{ role: string; message: string }>(convFile).slice(-maxEntries);
+  return entries.map(e =>
+    `${e.role === "user" ? "user" : "Pincer"}: ${e.message}`
+  ).join("\n\n");
 }
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
+
+function parseJsonl<T = any>(path: string): T[] {
+  try {
+    const raw = existsSync(path) ? readFileSync(path, "utf-8").trim() : "";
+    if (!raw) return [];
+    return raw.split("\n")
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch { return []; }
+}
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${seconds}s`;
+}
+
+// Tracking for /status
+const startedAt = Date.now();
+let messageCount = 0;
+let lastMessageAt: number | null = null;
 
 bot.on("message:text", async (ctx) => {
   // Only respond to allowed chat
@@ -259,6 +289,115 @@ bot.on("message:text", async (ctx) => {
 
   const text = ctx.message.text;
   log("info", `[message] ${text}`);
+
+  // /status — bridge health check (add "deep" for Claude diagnostic)
+  if (/^\/status(@\w+)?(\s+deep)?$/i.test(text.trim())) {
+    const isDeep = /deep$/i.test(text.trim());
+    const uptimeStr = formatDuration(Math.floor((Date.now() - startedAt) / 1000));
+
+    const fileSize = (path: string): string => {
+      try {
+        const bytes = statSync(path).size;
+        return bytes < 1024 ? `${bytes}B` : `${(bytes / 1024).toFixed(1)}KB`;
+      } catch { return "—"; }
+    };
+
+    const lastActivityStr = lastMessageAt
+      ? formatDuration(Math.floor((Date.now() - lastMessageAt) / 1000)) + " ago"
+      : "—";
+
+    const archiveCount = (() => {
+      try {
+        return readdirSync(agentHome).filter(f => f.startsWith("conversations-") && f.endsWith(".jsonl")).length;
+      } catch { return 0; }
+    })();
+
+    const lines = [
+      `Uptime: ${uptimeStr}`,
+      `Session: ${sessionId ? sessionId.slice(0, 8) + "…" : "none"}`,
+      `Messages this session: ${messageCount}`,
+      `Last activity: ${lastActivityStr}`,
+      `memory.md: ${fileSize(resolve(agentHome, "memory.md"))}`,
+      `personality.md: ${fileSize(resolve(agentHome, "personality.md"))}`,
+      `tools.md: ${fileSize(resolve(agentHome, "tools.md"))}`,
+      `conversations.jsonl: ${fileSize(convFile)}`,
+      `Conversation archives: ${archiveCount}`,
+      `bridge.log: ${fileSize(logFile)}`,
+      `Claude: ${claudeBin}`,
+    ];
+    await ctx.reply(lines.join("\n"));
+
+    // Deep diagnostic only on explicit request (spawns a Claude call)
+    if (isDeep) {
+      await ctx.reply("Deeper check in progress…");
+      await ctx.replyWithChatAction("typing");
+
+      try {
+        const diagnosticPrompt =
+          "[System command — diagnostic mode]\n" +
+          "Run a quick health check. Read the following files and report:\n\n" +
+          "1. ~/.pincer/memory.md — summarize what's stored (topics, size, anything stale)\n" +
+          "2. ~/.pincer/personality.md — is it configured or still placeholder?\n" +
+          "3. ~/.pincer/tools.md — is it configured? any broken paths?\n" +
+          "4. ~/.pincer/bridge.log — read the last 50 lines, report any errors or warnings\n" +
+          "5. ~/.pincer/conversations.jsonl — how many entries? when was the first/last?\n\n" +
+          "Format: short bullet points per section. Flag anything that looks wrong.\n" +
+          "Do NOT fix anything — just report.";
+        const diagnostic = await claude(diagnosticPrompt);
+        if (diagnostic) {
+          await ctx.reply(diagnostic);
+        }
+      } catch (err) {
+        log("error", "[/status] diagnostic failed:", (err as Error).message);
+        await ctx.reply("Diagnostic failed — check bridge.log for details.");
+      }
+    }
+    return;
+  }
+
+  // /cost — spending summary
+  if (/^\/cost(@\w+)?$/i.test(text.trim())) {
+    try {
+      const entries = parseJsonl(costsFile);
+      if (entries.length === 0) {
+        await ctx.reply("No cost data yet.");
+        return;
+      }
+
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const weekAgo = new Date(now.getTime() - 7 * 86400000);
+      const monthStr = now.toISOString().slice(0, 7);
+
+      let totalAll = 0, totalToday = 0, totalWeek = 0, totalMonth = 0;
+      let countAll = 0, countToday = 0;
+      for (const e of entries) {
+        const cost = e.cost_usd ?? 0;
+        totalAll += cost;
+        countAll++;
+        if (e.ts?.startsWith(todayStr)) { totalToday += cost; countToday++; }
+        if (e.ts && new Date(e.ts) >= weekAgo) totalWeek += cost;
+        if (e.ts?.startsWith(monthStr)) totalMonth += cost;
+      }
+
+      const fmt = (n: number) => `$${n.toFixed(2)}`;
+      const first = entries[0]?.ts?.slice(0, 10) ?? "?";
+      const lines = [
+        `Today: ${fmt(totalToday)} (${countToday} calls)`,
+        `Last 7 days: ${fmt(totalWeek)}`,
+        `This month: ${fmt(totalMonth)}`,
+        `All time: ${fmt(totalAll)} (${countAll} calls, since ${first})`,
+      ];
+      await ctx.reply(lines.join("\n"));
+    } catch (err) {
+      log("error", "[/cost] failed:", (err as Error).message);
+      await ctx.reply("Failed to read cost data.");
+    }
+    return;
+  }
+
+  messageCount++;
+  lastMessageAt = Date.now();
 
   // /new — save memory + reset session
   if (/^\/new(@\w+)?$/i.test(text.trim())) {
@@ -299,6 +438,7 @@ bot.on("message:text", async (ctx) => {
 
     // Step 3: clear session
     sessionId = null;
+    messageCount = 0;
     saveSession();
     log("info", "[/new] session reset");
 
@@ -393,6 +533,8 @@ bot.catch((err) => {
 // Register bot commands for Telegram autocompletion
 await bot.api.setMyCommands([
   { command: "new", description: "Save memory and reset session" },
+  { command: "status", description: "Bridge health check" },
+  { command: "cost", description: "Spending summary" },
 ]);
 
 log("info", "Pincer bridge started — listening for Telegram messages...");

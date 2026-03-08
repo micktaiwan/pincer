@@ -7,6 +7,8 @@ Source of truth on what Pincer can do. Read on demand when a user asks.
 | Command | Description |
 |---------|-------------|
 | `/new` | Saves the current conversation's memory, archives history, then resets the session. Useful when switching topics or when the session is unstable. |
+| `/status` | Bridge health check — shows uptime, session state, message count, file sizes. Instant response, no Claude call. Add `deep` for a Claude-powered diagnostic. |
+| `/cost` | Spending summary — today, last 7 days, this month, all time. |
 
 Any other text message is treated as free conversation — Pincer responds via Claude.
 

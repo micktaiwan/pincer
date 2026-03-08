@@ -94,6 +94,10 @@ Personal config files (`personality.md`, `tools.md`) are **referenced** from `ag
 - **bridge/**: Node.js process that listens to Telegram (grammy, long polling) and spawns `claude -p` for each message
 - **scripts/**: curl wrappers for sending messages (used by crons/loops)
 
+## Dev notes
+
+- **No `tsc`**: the bridge uses `tsx` for direct TS execution, there is no TypeScript compiler installed. Don't try `npx tsc` — it will fail with "This is not the tsc command you are looking for". To check syntax, run `node --import tsx/esm -e "import('./index.ts')"` from `bridge/`.
+
 ## Docs
 
 - `docs/roadmap.md` — project phases and next steps

@@ -23,12 +23,12 @@ CLAUDE.md originally served both purposes (dev + agent personality). Separated b
 
 ### Three-layer config (inspired by OpenClaw)
 
-The agent's context is split into three layers, assembled at startup:
+The agent's context is split into three layers:
 1. **`personality.md`** (personal, not committed) — who the agent is (name, tone, traits)
 2. **`tools.md`** (personal, not committed) — what the user has (integrations, paths, platform)
 3. **`agent/CLAUDE.md`** (committed) — how the framework works (memory, architecture, restart)
 
-The bridge concatenates all three into `~/.pincer/CLAUDE.md` at startup. If personal files are missing, `.example` templates are copied as defaults. This allows the repo to be public without exposing personal config.
+Personal files are referenced from `agent/CLAUDE.md` and read by the agent at runtime — not concatenated. The bridge seeds `.example` templates on first launch. On first message, the bridge injects a one-time setup prompt so the agent configures itself by asking the user for name/language/tone.
 
 ### Memory: memory.md vs Claude Code auto-memory
 
@@ -66,10 +66,12 @@ Claude Code's auto-memory (`~/.claude/projects/*/memory/`) doesn't work in `-p` 
 
 ### Phase 4 — Open source readiness
 23. [x] Three-layer config: personality (who) + tools (what) + system (how)
-24. [ ] Translate all docs and code to English
+24. [x] Translate all docs and code to English
+25. [x] First-run setup via conversation (agent asks for name/language/tone)
+26. [x] Startup notification on Telegram ("Back online")
 
 ### Phase 5 — Evolutions
-25. [ ] Long message handling (Telegram 4096 char chunking)
-26. [ ] Continuous typing indicator
-27. [ ] Smart notifications (filtering, priority, quiet hours)
-28. [ ] Telegram commands (/reset, /status, etc.)
+27. [ ] Long message handling (Telegram 4096 char chunking)
+28. [ ] Continuous typing indicator
+29. [ ] Smart notifications (filtering, priority, quiet hours)
+30. [ ] Persistent agent mode — task loop until completion instead of single Q&A ([details](persistent-agent.md))
