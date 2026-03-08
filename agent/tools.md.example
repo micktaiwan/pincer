@@ -1,0 +1,27 @@
+# Tools & Local Config
+
+## Source code
+
+Path: /path/to/your/pincer/clone/
+
+## Platform
+
+- (your OS — macOS with launchd, Linux with systemd, etc.)
+
+## Integrations
+
+(list your MCP servers, webhooks, and other integrations here)
+
+## Crons / Scheduled tasks
+
+(describe how the user wants to schedule tasks on their machine)
+
+## Proactivity
+
+### When to notify
+
+- (list conditions for proactive notifications)
+
+### When to stay quiet
+
+- (list conditions for staying silent)

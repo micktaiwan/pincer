@@ -1,90 +1,90 @@
-# Autonomous Dev — Pincer comme développeur autonome
+# Autonomous Dev — Pincer as Autonomous Developer
 
-## L'idée
+## The Idea
 
-Laisser Pincer tourner en autonomie (la nuit, le weekend) pour développer sur un projet. Il prend des tâches dans un backlog, code, ouvre des PRs. Mickael review au réveil.
+Let Pincer run autonomously (overnight, on weekends) to develop on a project. It picks tasks from a backlog, codes, opens PRs. Mickael reviews in the morning.
 
-## Mécanisme d'exécution
+## Execution Mechanism
 
 ### /loop vs cron
 
-- **`/loop`** : session vivante, le contexte s'accumule. Pincer sait ce qu'il a fait à l'itération précédente, peut enchaîner les tâches intelligemment. Mais : coût tokens élevé car le contexte grossit, et si le process meurt on perd l'état.
-- **Cron** : cold start à chaque run. Chaque tâche est indépendante. Plus robuste (pas de perte d'état), moins cher (contexte minimal), mais pas de continuité entre les tâches.
+- **`/loop`**: live session, context accumulates. Pincer knows what it did in the previous iteration, can chain tasks intelligently. But: high token cost as context grows, and if the process dies the state is lost.
+- **Cron**: cold start each run. Each task is independent. More robust (no state loss), cheaper (minimal context), but no continuity between tasks.
 
-Meilleur candidat pour commencer : probablement un **cron** qui traite une tâche par run. Plus simple, plus prévisible, plus facile à debugger.
+Best candidate to start: probably a **cron** that processes one task per run. Simpler, more predictable, easier to debug.
 
-## Source des tâches
+## Task Source
 
-Plusieurs options :
-1. **Issues GitHub** taggées (ex: label `autopilot`) — standard, facile à filtrer via `gh`
-2. **Tâches Panorama** — déjà intégré via MCP
-3. **Fichier dédié** (ex: `autopilot-backlog.md`) — le plus simple pour prototyper
-4. **Goals d'Eko** — voir `docs/agent-collaboration.md`
+Several options:
+1. **GitHub issues** with tags (e.g., label `autopilot`) — standard, easy to filter via `gh`
+2. **Panorama tasks** — already integrated via MCP
+3. **Dedicated file** (e.g., `autopilot-backlog.md`) — simplest for prototyping
+4. **Eko's goals** — see `docs/agent-collaboration.md`
 
-## Flow par tâche
+## Flow Per Task
 
-1. Pincer lit le backlog, prend la première tâche non traitée
-2. Lit le code existant, comprend le contexte
-3. Crée une branche (`autopilot/task-xxx` ou `autopilot/description-courte`)
-4. Implémente
-5. Lance les tests
-6. Si tests OK → commit, push, ouvre une PR, marque la tâche comme faite
-7. Si tests KO → s'arrête, notifie Mickael sur Telegram avec le détail de l'erreur
-8. Passe à la tâche suivante (ou s'arrête si limite atteinte)
+1. Pincer reads the backlog, picks the first unprocessed task
+2. Reads existing code, understands context
+3. Creates a branch (`autopilot/task-xxx` or `autopilot/short-description`)
+4. Implements
+5. Runs tests
+6. If tests pass → commit, push, open a PR, mark task as done
+7. If tests fail → stops, notifies Mickael on Telegram with error details
+8. Moves to next task (or stops if limit reached)
 
-## Questions ouvertes
+## Open Questions
 
-### Quel projet ?
-- **Pincer lui-même** : méta (l'agent s'améliore lui-même). Risque : il peut casser son propre bridge
-- **Organizer** : gros codebase, beaucoup de surface, tests existants ?
-- **Nouveau projet** : terrain vierge, moins de risque de casser l'existant, mais moins utile
-- **Projet open source externe** : intéressant mais problèmes de contexte et permissions
+### Which project?
+- **Pincer itself**: meta (the agent improves itself). Risk: it can break its own bridge
+- **Organizer**: large codebase, lots of surface area, existing tests?
+- **New project**: clean slate, less risk of breaking things, but less useful
+- **External open source project**: interesting but context and permissions challenges
 
-### Garde-fous
-- **Limite de PRs par session** : combien max ? 1 ? 3 ? 10 ?
-- **Limite de coût** : budget tokens par nuit ?
-- **Scope par tâche** : max de fichiers modifiés ? Max de lignes changées ?
-- **Arrêt d'urgence** : comment stopper Pincer en pleine nuit ? (kill le process ? commande Telegram ?)
-- **Tests obligatoires** : interdire de push si les tests ne passent pas ?
-- **Branches protégées** : jamais de push sur main, uniquement des PRs
+### Guardrails
+- **PR limit per session**: how many max? 1? 3? 10?
+- **Cost limit**: token budget per night?
+- **Scope per task**: max files modified? Max lines changed?
+- **Emergency stop**: how to stop Pincer mid-night? (kill process? Telegram command?)
+- **Mandatory tests**: forbid pushing if tests don't pass?
+- **Protected branches**: never push to main, only PRs
 
-### Qualité sans review en temps réel
-- Les tests deviennent le seul filet de sécurité
-- Un projet sans bonne couverture de tests est un mauvais candidat
-- Faut-il que Pincer écrive aussi les tests ? (risque : tests qui valident du code faux)
-- Linter/formatter obligatoire avant commit
+### Quality Without Real-time Review
+- Tests become the only safety net
+- A project without good test coverage is a bad candidate
+- Should Pincer also write tests? (risk: tests that validate incorrect code)
+- Mandatory linter/formatter before commit
 
-### Feedback et reporting
-- Notification Telegram à chaque PR ouverte ?
-- Résumé en fin de session ("cette nuit j'ai fait X, Y, Z") ?
-- Log détaillé des décisions prises ?
-- Que faire si Pincer est bloqué sur une tâche ? Timeout et skip ? Notifier ?
+### Feedback and Reporting
+- Telegram notification for each opened PR?
+- End-of-session summary ("tonight I did X, Y, Z")?
+- Detailed log of decisions made?
+- What if Pincer is stuck on a task? Timeout and skip? Notify?
 
-### Direction vs autonomie
-- **Tâches précises** (ex: "ajoute un endpoint GET /health") : facile, prévisible
-- **Tâches vagues** (ex: "améliore la performance") : risqué, peut partir dans tous les sens
-- **Tâches créatives** (ex: "propose une nouvelle feature") : intéressant mais imprévisible
-- Pour commencer, rester sur des tâches précises et bien définies
+### Direction vs Autonomy
+- **Precise tasks** (e.g., "add a GET /health endpoint"): easy, predictable
+- **Vague tasks** (e.g., "improve performance"): risky, can go in every direction
+- **Creative tasks** (e.g., "propose a new feature"): interesting but unpredictable
+- To start, stick with precise, well-defined tasks
 
-### Coût
-- Opus 4.6 : ~$15/M input, ~$75/M output
-- Une nuit de dev autonome = potentiellement des centaines de milliers de tokens
-- Faut estimer le coût d'une tâche type avant de lancer
-- Alternative : utiliser Sonnet pour les tâches simples, Opus pour les tâches complexes ?
+### Cost
+- Opus 4.6: ~$15/M input, ~$75/M output
+- A night of autonomous dev = potentially hundreds of thousands of tokens
+- Need to estimate the cost of a typical task before launching
+- Alternative: use Sonnet for simple tasks, Opus for complex ones?
 
-### Concurrence avec le bridge Telegram
-- Si Pincer tourne en /loop sur un projet, il ne répond plus sur Telegram (même session bloquée ?)
-- Solution : deux instances séparées ? Le bridge Telegram reste indépendant, le dev autonome tourne dans sa propre session
-- Risque de conflits si les deux modifient les mêmes fichiers
+### Concurrency with the Telegram Bridge
+- If Pincer runs in /loop on a project, it no longer responds on Telegram (same session blocked?)
+- Solution: two separate instances? Telegram bridge stays independent, autonomous dev runs in its own session
+- Risk of conflicts if both modify the same files
 
-## Prérequis avant de lancer
+## Prerequisites Before Launching
 
-1. Choisir un projet cible avec de bons tests
-2. Définir un backlog clair avec des tâches atomiques
-3. Mettre en place les garde-fous (limites, notifications, arrêt d'urgence)
-4. Prototyper sur une seule tâche simple en mode surveillé
-5. Itérer
+1. Choose a target project with good tests
+2. Define a clear backlog with atomic tasks
+3. Set up guardrails (limits, notifications, emergency stop)
+4. Prototype on a single simple task in supervised mode
+5. Iterate
 
-## Relation avec la collab Pincer x Eko
+## Relationship with Pincer x Eko Collaboration
 
-Le dev autonome est plus général — Pincer travaille sur n'importe quel backlog. La collab Eko est un cas particulier où le backlog vient des goals d'un autre agent. Les deux idées sont complémentaires et partagent la même infra (branches, PRs, garde-fous).
+Autonomous dev is more general — Pincer works on any backlog. The Eko collaboration is a special case where the backlog comes from another agent's goals. Both ideas are complementary and share the same infrastructure (branches, PRs, guardrails).
