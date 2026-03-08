@@ -7,6 +7,7 @@
     "start": "node --disable-warning=DEP0040 --import tsx/esm index.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "grammy": "^1.35.0"
   },
   "devDependencies": {

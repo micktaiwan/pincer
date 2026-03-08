@@ -74,4 +74,4 @@ Claude Code's auto-memory (`~/.claude/projects/*/memory/`) doesn't work in `-p` 
 27. [ ] Long message handling (Telegram 4096 char chunking)
 28. [ ] Continuous typing indicator
 29. [ ] Smart notifications (filtering, priority, quiet hours)
-30. [ ] Persistent agent mode — task loop until completion instead of single Q&A ([details](persistent-agent.md))
+30. [ ] Persistent agent mode — task loop until completion instead of single Q&A ([details](persistent-agent-spec.md))

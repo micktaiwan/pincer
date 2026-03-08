@@ -9,6 +9,10 @@ Source of truth on what Pincer can do. Read on demand when a user asks.
 | `/new` | Saves the current conversation's memory, archives history, then resets the session. Useful when switching topics or when the session is unstable. |
 | `/status` | Bridge health check — shows uptime, session state, message count, file sizes. Instant response, no Claude call. Add `deep` for a Claude-powered diagnostic. |
 | `/cost` | Spending summary — today, last 7 days, this month, all time. |
+| `/agent <prompt>` | Spawn a persistent agent for a long-running task. The agent works autonomously, sends progress updates, and can ask questions. |
+| `/agents` | List active persistent agents with status, label, and cost. |
+| `/kill <label>` | Stop a specific persistent agent by its label. |
+| `/kill all` | Stop all running persistent agents. |
 
 Any other text message is treated as free conversation — Pincer responds via Claude.
 
@@ -47,10 +51,14 @@ Any other text message is treated as free conversation — Pincer responds via C
 - **Development**: can write, modify, and debug code
 - **Emails & calendar**: via Panorama (read, search, summarize)
 - **Proactive notifications**: urgent emails, upcoming events, PRs to review
+- **Persistent agents**: long-running tasks via `/agent` — works until done, sends progress, asks questions when blocked
 
 ## Limitations
 
-- 120-second timeout per Claude request
+- Max 3 concurrent persistent agents (configurable via MAX_AGENTS)
+- Per-agent timeout: 10 minutes of active work (configurable via AGENT_TIMEOUT_MS)
+- ask_user timeout: 30 minutes
+- 120-second timeout per regular Claude request
 - Telegram messages limited to 4096 characters (no chunking yet)
 - No image/document handling from Telegram (text only)
 - Memory limited to memory.md file (no database)
