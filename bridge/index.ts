@@ -389,6 +389,30 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
+  // /continue <label> [message] — resume a finished/timed-out agent
+  // Label can be quoted ("Email Setup") or unquoted single word (c78345fd)
+  const continueMatch = text.trim().match(/^\/continue(@\w+)?\s+(?:["«\u201c]([^"»\u201d]+)["»\u201d]|(\S+))(?:\s+([\s\S]+))?$/i);
+  if (continueMatch) {
+    const labelOrId = (continueMatch[2] || continueMatch[3] || "").trim();
+    const userMessage = continueMatch[4]?.trim() || "Continue where you left off.";
+    const active = agentManager.listActive();
+    if (active.length >= maxAgents) {
+      await ctx.reply(`${active.length} agents already running (max ${maxAgents}). Use /kill to stop one first.`);
+      return;
+    }
+
+    logConversation("user", text);
+    try {
+      const agentId = await agentManager.continueAgent(labelOrId, userMessage);
+      const agent = agentManager.get(agentId);
+      await ctx.reply(`Follow-up agent [${agent?.label || agentId.slice(0, 6)}] spawned.`);
+    } catch (err) {
+      log("error", "[/continue] failed:", (err as Error).message);
+      await ctx.reply((err as Error).message);
+    }
+    return;
+  }
+
   messageCount++;
   lastMessageAt = Date.now();
 
@@ -451,10 +475,21 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // /agent <prompt> — spawn a persistent agent
+  // /agent [--timeout Nm|h] <prompt> — spawn a persistent agent
   const agentMatch = text.trim().match(/^\/agent(@\w+)?\s+(.+)$/is);
   if (agentMatch) {
-    const task = agentMatch[2].trim();
+    let task = agentMatch[2].trim();
+    let timeoutMs: number | undefined;
+
+    // Parse --timeout flag (e.g., --timeout 20m, --timeout 1h)
+    const timeoutMatch = task.match(/^--timeout\s+(\d+)(m|h)\s+(.+)$/is);
+    if (timeoutMatch) {
+      const value = parseInt(timeoutMatch[1]);
+      const unit = timeoutMatch[2].toLowerCase();
+      timeoutMs = unit === "h" ? value * 60 * 60 * 1000 : value * 60 * 1000;
+      task = timeoutMatch[3].trim();
+    }
+
     const active = agentManager.listActive();
     if (active.length >= maxAgents) {
       await ctx.reply(`${active.length} agents already running (max ${maxAgents}). Use /kill to stop one first.`);
@@ -463,9 +498,10 @@ bot.on("message:text", async (ctx) => {
 
     logConversation("user", text);
     try {
-      const agentId = await agentManager.spawn(task);
+      const agentId = await agentManager.spawn(task, timeoutMs ? { timeoutMs } : undefined);
       const agent = agentManager.get(agentId);
-      await ctx.reply(`Agent [${agent?.label || agentId.slice(0, 6)}] spawned.`);
+      const timeoutInfo = timeoutMs ? ` (timeout: ${Math.round(timeoutMs / 60000)}min)` : "";
+      await ctx.reply(`Agent [${agent?.label || agentId.slice(0, 6)}] spawned.${timeoutInfo}`);
     } catch (err) {
       log("error", "[/agent] spawn failed:", (err as Error).message);
       await ctx.reply("Failed to spawn agent — check bridge.log.");
@@ -597,6 +633,7 @@ await bot.api.setMyCommands([
   { command: "agent", description: "Spawn a persistent agent for a task" },
   { command: "agents", description: "List active persistent agents" },
   { command: "kill", description: "Stop an agent (label or 'all')" },
+  { command: "continue", description: "Resume a finished/timed-out agent" },
 ]);
 
 // Start MCP server

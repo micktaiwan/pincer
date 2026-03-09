@@ -19,61 +19,65 @@ export function createMcpServer(config: McpServerConfig) {
   // Map SSE session ID → transport (for routing POST /messages)
   const transports = new Map<string, SSEServerTransport>();
 
-  const mcpServer = new McpServer({
-    name: "pincer-bridge",
-    version: "1.0.0",
-  });
+  // Create a fresh McpServer instance per agent connection, with the same tools.
+  // The MCP SDK only allows one transport per McpServer instance.
+  function createMcpInstance(): McpServer {
+    const mcp = new McpServer({
+      name: "pincer-bridge",
+      version: "1.0.0",
+    });
 
-  // --- Tool: set_label ---
-  mcpServer.tool(
-    "set_label",
-    "Set a short label for this agent (e.g. 'Notion', 'PR-142'). Call this first.",
-    { label: z.string().describe("Short label (1-2 words) describing the task") },
-    async (params, extra) => {
-      const agentId = resolveAgentId(extra);
-      if (!agentId) return errorResult("Agent not identified");
-      agentManager.setLabel(agentId, params.label);
-      return { content: [{ type: "text" as const, text: `Label set to: ${params.label}` }] };
-    },
-  );
+    // --- Tool: set_label ---
+    mcp.tool(
+      "set_label",
+      "Set a short label for this agent (e.g. 'Notion', 'PR-142'). Call this first.",
+      { label: z.string().describe("Short label (1-2 words) describing the task") },
+      async (params, extra) => {
+        const agentId = resolveAgentId(extra);
+        if (!agentId) return errorResult("Agent not identified");
+        agentManager.setLabel(agentId, params.label);
+        return { content: [{ type: "text" as const, text: `Label set to: ${params.label}` }] };
+      },
+    );
 
-  // --- Tool: send_message ---
-  mcpServer.tool(
-    "send_message",
-    "Send a message to the user on Telegram. Non-blocking.",
-    { text: z.string().describe("Message text to send") },
-    async (params, extra) => {
-      const agentId = resolveAgentId(extra);
-      if (!agentId) return errorResult("Agent not identified");
-      try {
-        await agentManager.sendMessage(agentId, params.text);
-        return { content: [{ type: "text" as const, text: "Message sent." }] };
-      } catch (err) {
-        return errorResult(`Failed to send: ${(err as Error).message}`);
-      }
-    },
-  );
+    // --- Tool: send_message ---
+    mcp.tool(
+      "send_message",
+      "Send a message to the user on Telegram. Non-blocking.",
+      { text: z.string().describe("Message text to send") },
+      async (params, extra) => {
+        const agentId = resolveAgentId(extra);
+        if (!agentId) return errorResult("Agent not identified");
+        try {
+          await agentManager.sendMessage(agentId, params.text);
+          return { content: [{ type: "text" as const, text: "Message sent." }] };
+        } catch (err) {
+          return errorResult(`Failed to send: ${(err as Error).message}`);
+        }
+      },
+    );
 
-  // --- Tool: ask_user ---
-  mcpServer.tool(
-    "ask_user",
-    "Ask the user a question and wait for their reply (blocks up to 30 minutes).",
-    { question: z.string().describe("Question to ask the user") },
-    async (params, extra) => {
-      const agentId = resolveAgentId(extra);
-      if (!agentId) return errorResult("Agent not identified");
-      try {
-        const reply = await agentManager.askUser(agentId, params.question);
-        return { content: [{ type: "text" as const, text: reply }] };
-      } catch (err) {
-        return { content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }], isError: true };
-      }
-    },
-  );
+    // --- Tool: ask_user ---
+    mcp.tool(
+      "ask_user",
+      "Ask the user a question and wait for their reply (blocks up to 30 minutes).",
+      { question: z.string().describe("Question to ask the user") },
+      async (params, extra) => {
+        const agentId = resolveAgentId(extra);
+        if (!agentId) return errorResult("Agent not identified");
+        try {
+          const reply = await agentManager.askUser(agentId, params.question);
+          return { content: [{ type: "text" as const, text: reply }] };
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }], isError: true };
+        }
+      },
+    );
+
+    return mcp;
+  }
 
   function resolveAgentId(extra: any): string | null {
-    // The extra context from the MCP SDK contains the transport/session info.
-    // We resolve it via sessionId that was registered when the SSE connection was created.
     const sessionId = extra?.sessionId;
     if (sessionId && sessionToAgent.has(sessionId)) {
       return sessionToAgent.get(sessionId)!;
@@ -100,7 +104,7 @@ export function createMcpServer(config: McpServerConfig) {
       return;
     }
 
-    // SSE endpoint — one connection per agent
+    // SSE endpoint — one connection per agent, one McpServer per connection
     if (req.method === "GET" && url.pathname === "/sse") {
       const agentId = url.searchParams.get("agent");
       if (!agentId) {
@@ -123,7 +127,8 @@ export function createMcpServer(config: McpServerConfig) {
         log("info", `[mcp] SSE disconnected: agent ${agentId}`);
       });
 
-      await mcpServer.connect(transport);
+      const mcpInstance = createMcpInstance();
+      await mcpInstance.connect(transport);
       return;
     }
 
