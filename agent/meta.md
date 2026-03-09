@@ -33,8 +33,21 @@ Any other text message is treated as free conversation — Pincer responds via C
 ### Slack
 - Send messages via webhook (`scripts/slack.sh`)
 
-### Crons & Scheduled Tasks
-- Can create crons (`crontab`) or daemons (`launchd`) on the user's Mac
+### Scheduled / Recurring Tasks
+- The bridge exposes `POST http://127.0.0.1:3100/trigger` with body `{"prompt":"..."}` — this spawns a persistent agent
+- To schedule a recurring task:
+  1. Write the prompt to a JSON file in `~/.pincer/triggers/` (create dir if needed):
+     ```
+     echo '{"prompt":"Your prompt here with accents and apostrophes"}' > ~/.pincer/triggers/email-summary.json
+     ```
+  2. Create a cron via `crontab` that reads from the file (`-d @file`):
+     ```
+     7 */3 * * * curl -s -X POST http://127.0.0.1:3100/trigger -H 'Content-Type: application/json' -d @/Users/mickaelfm/.pincer/triggers/email-summary.json
+     ```
+- **NEVER put the prompt inline in the cron command** — shell quoting breaks accents and apostrophes. Always use a file.
+- **NEVER use Claude Code's `CronCreate`/`CronDelete` tools** — they are session-only (in-memory, auto-expire after 3 days). Use `crontab` via Bash for persistent crons.
+- To modify a scheduled task: update the JSON file (no cron change needed). To stop: remove the cron line.
+- To list/modify/delete crons: `crontab -l` and `crontab` via Bash
 
 ### Self-modification
 - Can modify its own source code (bridge, scripts, agent CLAUDE.md)
