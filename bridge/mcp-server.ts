@@ -141,6 +141,32 @@ export function createMcpServer(config: McpServerConfig) {
       return;
     }
 
+    // Trigger endpoint — spawn an agent from cron or external script
+    if (req.method === "POST" && url.pathname === "/trigger") {
+      let body = "";
+      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("end", async () => {
+        try {
+          const { prompt } = JSON.parse(body);
+          if (!prompt || typeof prompt !== "string") {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Missing or invalid 'prompt'" }));
+            return;
+          }
+          const agentId = await agentManager.spawn(prompt);
+          log("info", `[trigger] spawned agent ${agentId} for: ${prompt.slice(0, 100)}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, agentId }));
+        } catch (err) {
+          const message = (err as Error).message;
+          log("error", `[trigger] failed: ${message}`);
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+      return;
+    }
+
     // Health check
     if (req.method === "GET" && url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
