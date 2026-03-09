@@ -115,6 +115,25 @@ The main security boundary is the **`TELEGRAM_CHAT_ID` filter**: the bridge only
 
 **Keep your `.env` secret.** If both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are compromised, an attacker can send arbitrary prompts that the agent will execute with full shell access on your machine.
 
+## Why spawn `claude` locally?
+
+Pincer spawns the official `claude` CLI binary as a subprocess — it doesn't extract OAuth tokens, spoof the Claude Code harness, or call the Anthropic API directly with consumer credentials.
+
+This matters because Anthropic's enforcement targets tools that **extract and reuse OAuth tokens** in third-party clients (OpenClaw, Cline, etc.), not wrappers that run the real CLI. The [official documentation](https://code.claude.com/docs/en/legal-and-compliance) states:
+
+> "Using OAuth tokens obtained through Claude Free, Pro, or Max accounts in any other product, tool, or service — including the Agent SDK — is not permitted."
+
+Pincer doesn't do any of that. Here's what it does:
+
+- **Spawns the real `claude` binary** via `child_process.spawn("claude", ["-p", ...])` — same as running it in a terminal
+- **Single user, single machine** — no multi-tenancy, no token sharing, no resale
+- **CLI is designed for automation** — `claude -p` (print mode) and `--resume` exist specifically for scripting and programmatic use
+- **No token extraction** — authentication is handled entirely by the `claude` binary itself
+
+The approach is similar to dozens of open-source projects that wrap the Claude CLI (Kai, CCBot, Qlaude, Claudegram) — none of which have been subject to enforcement action.
+
+Could Anthropic change the rules? Yes. But today, running `claude -p` in a subprocess is the most legitimate way to build on top of Claude Code. If the rules tighten, switching to the API is straightforward.
+
 ## License
 
 MIT
