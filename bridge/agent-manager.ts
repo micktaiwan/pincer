@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentState } from "./types.js";
@@ -17,8 +17,9 @@ interface AgentManagerConfig {
 }
 
 export interface AgentManager {
-  spawn(task: string): Promise<string>;
+  spawn(task: string, options?: { timeoutMs?: number }): Promise<string>;
   spawnFollowUp(previousAgentId: string, userMessage: string): Promise<string>;
+  continueAgent(labelOrId: string, userMessage: string): Promise<string>;
   kill(idOrLabel: string): boolean;
   killAll(): number;
   listActive(): AgentState[];
@@ -149,17 +150,19 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
       }
     }
 
-    if (wasError) {
-      config.sendTelegram(`[${agent.label}] Agent stopped with an error.`).catch(() => {});
-    } else {
-      config.sendTelegram(`[${agent.label}] Done.`).catch(() => {});
-    }
+    const doneMsg = wasError
+      ? `[${agent.label}] Agent stopped with an error. Reply to continue.`
+      : `[${agent.label}] Done.`;
+    config.sendTelegram(doneMsg).then((msgId) => {
+      if (msgId) messageToAgent.set(msgId, agentId);
+    }).catch(() => {});
 
     notifyDone(agent, logContent);
   }
 
   return {
-    async spawn(task: string): Promise<string> {
+    async spawn(task: string, options?: { timeoutMs?: number }): Promise<string> {
+      const effectiveTimeout = options?.timeoutMs ?? config.agentTimeoutMs;
       // Enforce max agents
       const active = [...agents.values()].filter(a => a.status === "working" || a.status === "waiting");
       if (active.length >= config.maxAgents) {
@@ -198,12 +201,18 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
         logFile: logFilePath,
       };
 
+      const timeoutMinutes = Math.round((options?.timeoutMs ?? config.agentTimeoutMs) / 60000);
       const agentPrompt =
         `[System] You are a persistent agent. Your task:\n${task}\n\n` +
         `You have MCP tools to communicate with the user:\n` +
         `- mcp__pincer-bridge__set_label: call FIRST with a short label for your task (1-2 words)\n` +
         `- mcp__pincer-bridge__send_message: send progress updates\n` +
         `- mcp__pincer-bridge__ask_user: ask a question and wait for the answer\n\n` +
+        `Important context:\n` +
+        `- Your cwd is ~/.pincer/ (not the source repo). Use absolute paths for other projects.\n` +
+        `- You have SSH access to remote servers. If something might be on a server, try SSH before searching local files.\n` +
+        `- You have a ${timeoutMinutes}min active work timeout. Be efficient: try the simplest approach first.\n` +
+        `- Avoid excessive exploration. If 3-5 searches don't find what you need, ask the user rather than running 50 more searches.\n\n` +
         `Start by calling set_label, then work on the task. Send progress updates. ` +
         `If blocked, ask the user. Don't give up — try alternative approaches. ` +
         `When done, send a final summary via send_message.`;
@@ -311,11 +320,14 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
         wasWorking = isWorking;
 
         const totalActive = isWorking ? activeTimeMs + (Date.now() - workStartedAt) : activeTimeMs;
-        if (totalActive >= config.agentTimeoutMs) {
-          log("info", `[agent ${agent.label}] timed out after ${Math.round(totalActive / 1000)}s of active work`);
+        if (totalActive >= effectiveTimeout) {
+          log("info", `[agent ${agent.label}] timed out after ${Math.round(totalActive / 1000)}s of active work (limit: ${Math.round(effectiveTimeout / 1000)}s)`);
           clearInterval(timeoutTimer);
+          agent.status = "done"; // Mark done before kill to prevent double notification in handleAgentExit
           child.kill();
-          config.sendTelegram(`[${agent.label}] Agent timed out.`).catch(() => {});
+          config.sendTelegram(`[${agent.label}] Agent timed out (${Math.round(effectiveTimeout / 60000)}min limit). Reply to continue.`).then((msgId) => {
+            if (msgId) messageToAgent.set(msgId, agentId);
+          }).catch(() => {});
         }
       }, 5000);
 
@@ -401,6 +413,52 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
         `[System] This is a follow-up to a previous agent task [${previousAgent.label}].\n` +
         `Here is the previous agent's log for context:\n\n${logContent}\n\n` +
         `The user replied with: ${userMessage}`;
+
+      return this.spawn(task);
+    },
+
+    async continueAgent(labelOrId: string, userMessage: string): Promise<string> {
+      // First try to find agent in memory (active or recently finished)
+      let agentId: string | undefined;
+      let label: string | undefined;
+      let logContent: string | undefined;
+
+      for (const [id, a] of agents) {
+        if (a.label.toLowerCase() === labelOrId.toLowerCase() || id.startsWith(labelOrId)) {
+          agentId = id;
+          label = a.label;
+          logContent = readAgentLog(a);
+          break;
+        }
+      }
+
+      // If not in memory, scan agent dirs on disk
+      if (!logContent) {
+        const dirs = (() => { try { return readdirSync(agentsDir); } catch { return []; } })();
+        for (const dir of dirs) {
+          const logPath = resolve(agentsDir, dir, "agent.log");
+          try {
+            const content = readFileSync(logPath, "utf-8").trim();
+            if (!content) continue;
+            // Check if this agent's label matches (parse first set_label entry)
+            const labelMatch = content.match(/"type":"set_label".*?"to":"([^"]+)"/);
+            const dirLabel = labelMatch?.[1];
+            if (dirLabel?.toLowerCase() === labelOrId.toLowerCase() || dir.startsWith(labelOrId)) {
+              agentId = dir;
+              label = dirLabel || dir;
+              logContent = content;
+              break;
+            }
+          } catch { continue; }
+        }
+      }
+
+      if (!logContent) throw new Error(`No agent found matching "${labelOrId}"`);
+
+      const task =
+        `[System] This is a continuation of a previous agent task [${label}].\n` +
+        `Here is the previous agent's log for context:\n\n${logContent}\n\n` +
+        `The user says: ${userMessage}`;
 
       return this.spawn(task);
     },
