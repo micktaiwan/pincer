@@ -8,6 +8,7 @@ import {
   agentHome, logFile, costsFile, convFile,
   log, logCost, extractText, ClaudeError,
   parseJsonl, formatDuration, logConversation, getRecentConversation, dateFormatter,
+  splitMessage,
 } from "./utils.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,14 @@ try {
 const env: Record<string, string> = {};
 for (const line of readFileSync(envPath, "utf-8").split("\n")) {
   const match = line.match(/^([^#=]+)=(.*)$/);
-  if (match) env[match[1].trim()] = match[2].trim();
+  if (match) {
+    let value = match[2].trim();
+    // Strip surrounding quotes (single or double)
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    env[match[1].trim()] = value;
+  }
 }
 
 const token = env.TELEGRAM_BOT_TOKEN;
@@ -86,6 +94,9 @@ function saveSession() {
     writeFileSync(sessionFile, sessionId || "");
   } catch { /* best effort */ }
 }
+
+// Concurrency guard: prevent parallel claude() calls from clobbering sessionId
+let claudeBusy = false;
 
 function claude(prompt: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -228,9 +239,18 @@ const agentManager = createAgentManager({
   logConversation,
 });
 
+const smtpConfig = env.SMTP_HOST ? {
+  host: env.SMTP_HOST,
+  port: Number(env.SMTP_PORT) || 587,
+  user: env.SMTP_USER,
+  password: env.SMTP_PASSWORD,
+  from: env.SMTP_FROM,
+} : undefined;
+
 const mcpServer = createMcpServer({
   port: mcpPort,
   agentManager,
+  smtp: smtpConfig,
   log,
 });
 
@@ -547,7 +567,13 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // Regular conversational flow
+  // Regular conversational flow — prevent concurrent claude() calls
+  if (claudeBusy) {
+    await ctx.reply("Still processing a previous message, please wait...");
+    return;
+  }
+  claudeBusy = true;
+
   const now = dateFormatter.format(new Date());
   let prompt = `[${now}]\n`;
 
@@ -605,7 +631,9 @@ bot.on("message:text", async (ctx) => {
     }
     if (response) {
       logConversation("pincer", response);
-      await ctx.reply(response);
+      for (const chunk of splitMessage(response)) {
+        await ctx.reply(chunk);
+      }
     } else {
       logConversation("pincer", "(no response)");
       await ctx.reply("(no response)");
@@ -618,6 +646,8 @@ bot.on("message:text", async (ctx) => {
   } catch (err) {
     logConversation("pincer", "(error after all retries)");
     await ctx.reply("Sorry, I had a technical issue and couldn't recover. Please try again in a moment.");
+  } finally {
+    claudeBusy = false;
   }
 });
 

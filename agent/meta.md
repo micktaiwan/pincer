@@ -13,6 +13,7 @@ Source of truth on what Pincer can do. Read on demand when a user asks.
 | `/agents` | List active persistent agents with status, label, and cost. |
 | `/kill <label>` | Stop a specific persistent agent by its label. |
 | `/kill all` | Stop all running persistent agents. |
+| `/review` | Trigger a self-improvement review cycle — the agent reads its backlog, picks a task, implements it, and asks permission to deploy. |
 
 Any other text message is treated as free conversation — Pincer responds via Claude.
 
@@ -72,7 +73,7 @@ Any other text message is treated as free conversation — Pincer responds via C
 - Per-agent timeout: 10 minutes of active work (configurable via AGENT_TIMEOUT_MS)
 - ask_user timeout: 30 minutes
 - 120-second timeout per regular Claude request
-- Telegram messages limited to 4096 characters (no chunking yet)
+- Telegram messages limited to 4096 characters (auto-split into multiple messages)
 - No image/document handling from Telegram (text only)
 - Memory limited to memory.md file (no database)
 - Single authorized user (TELEGRAM_CHAT_ID in .env)
