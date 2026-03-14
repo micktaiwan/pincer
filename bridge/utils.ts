@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -74,4 +74,48 @@ export function getRecentConversation(maxEntries = 20): string {
   ).join("\n\n");
 }
 
+export function trimJsonl(path: string, maxEntries: number) {
+  try {
+    const raw = readFileSync(path, "utf-8").trim();
+    if (!raw) return;
+    const lines = raw.split("\n");
+    if (lines.length <= maxEntries) return;
+    const trimmed = lines.slice(-maxEntries).join("\n") + "\n";
+    writeFileSync(path, trimmed);
+    log("info", `[trim] ${path}: ${lines.length} → ${maxEntries} entries`);
+  } catch { /* best effort */ }
+}
+
 export const dateFormatter = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", dateStyle: "full", timeStyle: "short" });
+
+const TELEGRAM_MAX_LENGTH = 4096;
+
+/**
+ * Split a message into chunks that fit within Telegram's 4096 char limit.
+ * Prefers splitting on newlines; falls back to hard cut at maxLen.
+ */
+export function splitMessage(text: string, maxLen = TELEGRAM_MAX_LENGTH): string[] {
+  if (text.length <= maxLen) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Find the last newline within the limit
+    let splitAt = remaining.lastIndexOf("\n", maxLen);
+    if (splitAt <= 0) {
+      // No newline found — hard cut at maxLen
+      splitAt = maxLen;
+    }
+
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, ""); // trim leading newline from next chunk
+  }
+
+  return chunks;
+}

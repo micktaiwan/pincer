@@ -17,7 +17,7 @@ interface AgentManagerConfig {
 }
 
 export interface AgentManager {
-  spawn(task: string, options?: { timeoutMs?: number }): Promise<string>;
+  spawn(task: string, options?: { timeoutMs?: number; silent?: boolean; onDone?: (agentId: string, status: "done" | "error") => void }): Promise<string>;
   spawnFollowUp(previousAgentId: string, userMessage: string): Promise<string>;
   continueAgent(labelOrId: string, userMessage: string): Promise<string>;
   kill(idOrLabel: string): boolean;
@@ -38,6 +38,7 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
   const messageToAgent = new Map<number, string>();
   const pendingSummaries: string[] = [];
   let agentCounter = 0;
+  let isConsolidating = false;
 
   const agentsDir = resolve(config.agentHome, "agents");
   mkdirSync(agentsDir, { recursive: true });
@@ -62,6 +63,10 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
   }
 
   function notifyDone(agent: AgentState, cachedLog: string) {
+    if (agent.silent) {
+      cleanupAgent(agent.id);
+      return;
+    }
     const activeRemaining = [...agents.values()].filter(a => a.status === "working" || a.status === "waiting");
     if (activeRemaining.length === 0) {
       consolidateMemory();
@@ -69,8 +74,10 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
   }
 
   function consolidateMemory() {
+    if (isConsolidating) return;
     const finishedAgents = [...agents.values()].filter(a => a.status === "done" || a.status === "error");
     if (finishedAgents.length === 0) return;
+    isConsolidating = true;
 
     const logSummaries: string[] = [];
     for (const agent of finishedAgents) {
@@ -107,6 +114,7 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
 
     child.on("close", (code) => {
       log("info", `[agents] memory consolidation ${code === 0 ? "done" : "failed"} (exit ${code})`);
+      isConsolidating = false;
       // Schedule cleanup of finished agents after 1 hour (keep them for follow-up replies)
       for (const agent of finishedAgents) {
         setTimeout(() => cleanupAgent(agent.id), 60 * 60 * 1000);
@@ -115,6 +123,7 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
 
     child.on("error", (err) => {
       log("error", "[agents] memory consolidation spawn error:", err.message);
+      isConsolidating = false;
     });
   }
 
@@ -122,7 +131,10 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
     const agent = agents.get(agentId);
     if (!agent) return;
 
-    const wasError = code !== 0 && agent.status !== "done";
+    // Guard: skip if already handled (e.g. spawn error fired before close)
+    if (agent.status === "error" || agent.status === "done") return;
+
+    const wasError = code !== 0;
     agent.status = wasError ? "error" : "done";
 
     if (agent.pendingAsk) {
@@ -132,6 +144,10 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
 
     logAgent(agent, "exit", { code, status: agent.status });
     log("info", `[agent ${agent.label}] exited (code=${code}, status=${agent.status})`);
+
+    if (agent.onDone) {
+      try { agent.onDone(agent.id, agent.status as "done" | "error"); } catch { /* best effort */ }
+    }
 
     // Build summary from agent's sent messages (read log once, reused by consolidateMemory)
     const logContent = readAgentLog(agent);
@@ -150,18 +166,20 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
       }
     }
 
-    const doneMsg = wasError
-      ? `[${agent.label}] Agent stopped with an error. Reply to continue.`
-      : `[${agent.label}] Done.`;
-    config.sendTelegram(doneMsg).then((msgId) => {
-      if (msgId) messageToAgent.set(msgId, agentId);
-    }).catch(() => {});
+    if (!agent.silent) {
+      const doneMsg = wasError
+        ? `[${agent.label}] Agent stopped with an error. Reply to continue.`
+        : `[${agent.label}] Done.`;
+      config.sendTelegram(doneMsg).then((msgId) => {
+        if (msgId) messageToAgent.set(msgId, agentId);
+      }).catch(() => {});
+    }
 
     notifyDone(agent, logContent);
   }
 
   return {
-    async spawn(task: string, options?: { timeoutMs?: number }): Promise<string> {
+    async spawn(task: string, options?: { timeoutMs?: number; silent?: boolean; onDone?: (agentId: string, status: "done" | "error") => void }): Promise<string> {
       const effectiveTimeout = options?.timeoutMs ?? config.agentTimeoutMs;
       // Enforce max agents
       const active = [...agents.values()].filter(a => a.status === "working" || a.status === "waiting");
@@ -199,6 +217,8 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
         pendingAsk: null,
         costUsd: 0,
         logFile: logFilePath,
+        silent: options?.silent ?? false,
+        onDone: options?.onDone,
       };
 
       const timeoutMinutes = Math.round((options?.timeoutMs ?? config.agentTimeoutMs) / 60000);
@@ -298,8 +318,11 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
 
       child.on("error", (err) => {
         log("error", `[agent ${agent.label}] spawn error:`, err.message);
-        agent.status = "error";
-        notifyDone(agent, "");
+        // Guard: only notify once (close event may also fire after error)
+        if (agent.status !== "error" && agent.status !== "done") {
+          agent.status = "error";
+          notifyDone(agent, "");
+        }
       });
 
       // Agent work timeout — tracks cumulative active work time (paused while waiting)
@@ -326,7 +349,7 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
           agent.status = "done"; // Mark done before kill to prevent double notification in handleAgentExit
           child.kill();
           config.sendTelegram(`[${agent.label}] Agent timed out (${Math.round(effectiveTimeout / 60000)}min limit). Reply to continue.`).then((msgId) => {
-            if (msgId) messageToAgent.set(msgId, agentId);
+            if (msgId) messageToAgent.set(msgId, id);
           }).catch(() => {});
         }
       }, 5000);
@@ -378,6 +401,11 @@ export function createAgentManager(config: AgentManagerConfig): AgentManager {
           }
           agent.status = "done";
           agent.process.kill("SIGTERM");
+          // SIGKILL follow-up in case SIGTERM is ignored
+          const proc = agent.process;
+          setTimeout(() => {
+            try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+          }, 5000);
           logAgent(agent, "killed", { reason: "killAll" });
           count++;
         }

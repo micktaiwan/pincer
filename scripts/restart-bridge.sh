@@ -10,9 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Notify user before restarting
 "$SCRIPT_DIR/telegram.sh" "Restarting... 🔄"
 
-# Stop the bridge, wait for Telegram's long poll to expire, then restart
+# Stop the bridge — KeepAlive=true in the plist means launchd will
+# automatically restart it after ThrottleInterval (5s).
+# No need for `launchctl start` (that caused double restarts).
 launchctl stop com.pincer.bridge
-sleep 3
-launchctl start com.pincer.bridge
 
-echo "Bridge restarted."
+echo "Bridge restarting (launchd will respawn automatically)."
