@@ -204,7 +204,7 @@ function claude(prompt: string): Promise<string> {
     setTimeout(() => {
       killed = true;
       child.kill();
-    }, 120_000);
+    }, 20 * 60_000);
   });
 }
 
@@ -610,11 +610,17 @@ bot.on("message:text", async (ctx) => {
       const claudeErr = err instanceof ClaudeError ? err : null;
 
       if (sessionId) {
-        log("info", `[bridge] retry 1 — same session (${claudeErr?.isTimeout ? "timeout" : "error"})`);
-        try {
-          response = await claude(prompt);
-        } catch {
-          log("info", "[bridge] retry 2 — fresh session with context recovery");
+        // On timeout, skip retry on same session — it will just timeout again
+        if (!claudeErr?.isTimeout) {
+          log("info", `[bridge] retry 1 — same session (error)`);
+          try {
+            response = await claude(prompt);
+          } catch {
+            // fall through to fresh session
+          }
+        }
+        if (!response) {
+          log("info", `[bridge] ${claudeErr?.isTimeout ? "timeout — skipping same-session retry, going" : "retry 2 —"} fresh session with context recovery`);
           const history = getRecentConversation();
           sessionId = null;
           saveSession();
